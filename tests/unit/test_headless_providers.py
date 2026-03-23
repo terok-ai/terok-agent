@@ -190,8 +190,11 @@ class TestGenerateAllWrappers:
 
     def test_all_wrappers_valid_bash_syntax(self) -> None:
         """Combined wrapper output passes bash -n syntax check."""
+        import shutil
         import subprocess
 
+        if shutil.which("bash") is None:
+            pytest.skip("bash is required for wrapper syntax validation")
         wrapper = _all_wrappers(has_agents=True)
         result = subprocess.run(["bash", "-n"], input=wrapper, capture_output=True, text=True)
         assert result.returncode == 0, f"bash syntax error:\n{result.stderr}"

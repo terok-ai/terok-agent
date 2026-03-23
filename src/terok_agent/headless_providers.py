@@ -850,6 +850,8 @@ def _generate_generic_wrapper(provider: HeadlessProvider) -> str:
     if session_path:
         lines.append(f"            export TEROK_SESSION_FILE={session_path}")
     lines.append(f'        command {binary}{extra} "$@"')
+    if provider.name == "vibe" and session_path:
+        lines.append("        local _rc=$?; _terok_capture_vibe_session; return $_rc")
     lines.append("        )")
     lines.append("    fi")
     lines.append("}")

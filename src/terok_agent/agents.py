@@ -184,8 +184,11 @@ def _generate_claude_wrapper(cfg: WrapperConfig) -> str:
             '        _args+=(--append-system-prompt "$(cat /home/dev/.terok/instructions.md)")'
         )
 
-    # Resume previous session if session file exists (written by SessionStart hook)
+    # Resume previous session if session file exists (written by SessionStart hook).
+    # Only inject in headless mode (--terok-timeout) or bare interactive launch
+    # (no user args) — matches the generic wrapper's guard logic.
     lines.append("    [ -s /home/dev/.terok/claude-session.txt ] && \\")
+    lines.append('       { [ -n "$_timeout" ] || [ $# -eq 0 ]; } && \\')
     lines.append('        _args+=(--resume "$(cat /home/dev/.terok/claude-session.txt)")')
 
     # Git env vars and exec — with optional timeout
@@ -353,13 +356,14 @@ def _inject_opencode_instructions(config_path: Path) -> None:
                 existing = {}
 
             # Ensure the $schema key is always present for a valid opencode.json.
+            schema_added = "$schema" not in existing
             existing.setdefault("$schema", _SCHEMA_URL)
 
             instructions = existing.get("instructions")
             if isinstance(instructions, list) and instr_path in instructions:
-                return  # already present
-
-            if isinstance(instructions, list):
+                if not schema_added:
+                    return  # fully up-to-date, nothing to write
+            elif isinstance(instructions, list):
                 instructions.append(instr_path)
             else:
                 existing["instructions"] = [instr_path]

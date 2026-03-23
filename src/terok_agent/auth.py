@@ -265,20 +265,13 @@ def _run_auth_container(
     container_name = f"{project_id}-auth-{provider.name}"
     _cleanup_existing_container(container_name)
 
-    cmd = [
-        "podman",
-        "run",
-        "--rm",
-        "-it",
-        "-v",
-        f"{host_dir}:{provider.container_mount}:Z",
-        "--name",
-        container_name,
-    ]
-    userns = podman_userns_args()
-    cmd[3:3] = userns
+    cmd = ["podman", "run", "--rm"]
+    cmd.extend(podman_userns_args())
+    cmd.append("-it")
     if provider.extra_run_args:
-        cmd[3 + len(userns) : 3 + len(userns)] = list(provider.extra_run_args)
+        cmd.extend(provider.extra_run_args)
+    cmd.extend(["-v", f"{host_dir}:{provider.container_mount}:Z"])
+    cmd.extend(["--name", container_name])
     cmd.append(image)
     cmd.extend(provider.command)
 
