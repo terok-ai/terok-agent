@@ -25,6 +25,7 @@ packages = [
 [tool.poetry.dependencies]
 python = ">=3.12,<4.0"
 terok-sandbox = {url = "https://github.com/terok-ai/terok-sandbox/releases/download/v0.0.3/terok_sandbox-0.0.3-py3-none-any.whl"}
+"ruamel.yaml" = ">=0.18"
 
 [tool.poetry.group.dev.dependencies]
 ruff = ">=0.8"

@@ -14,10 +14,79 @@ ignore_type_checking_imports = true
 
 # ── Module Boundaries ───────────────────────────────────────────────
 #
-# Initial scaffolding — single module, no internal deps yet.
-# Will expand as instrumentation modules are extracted from terok.
+# Dependency flow:
+#   _util (standalone) ← config_stack ← {agent_config, instructions, agents}
+#   headless_providers (standalone, pure dataclasses)
+#   agents → _util + headless_providers
+#   auth → _util + headless_providers
+#   instructions → agent_config
+#   resources (data files, no code deps)
 
-# Package root — public API
+# Vendored utilities — standalone, no internal deps
+[[modules]]
+path = "terok_agent._util"
+depends_on = []
+
+# Bundled resources — data files
+[[modules]]
+path = "terok_agent.resources"
+depends_on = []
+
+# Headless provider registry + dispatch
+[[modules]]
+path = "terok_agent.headless_providers"
+depends_on = [
+    "terok_agent.agent_config",
+]
+
+# Config stack — generic layered resolution
+[[modules]]
+path = "terok_agent.config_stack"
+depends_on = [
+    "terok_agent._util",
+]
+
+# Provider-aware config value extraction
+[[modules]]
+path = "terok_agent.agent_config"
+depends_on = []
+
+# Instruction resolution (resources accessed via importlib.resources, not import)
+[[modules]]
+path = "terok_agent.instructions"
+depends_on = [
+    "terok_agent.agent_config",
+]
+
+# Agent config dir preparation + wrapper generation
+[[modules]]
+path = "terok_agent.agents"
+depends_on = [
+    "terok_agent._util",
+    "terok_agent.headless_providers",
+]
+
+# Auth flows
+[[modules]]
+path = "terok_agent.auth"
+depends_on = [
+    "terok_agent._util",
+    "terok_agent.headless_providers",
+]
+
+# CLI entry point
+[[modules]]
+path = "terok_agent.cli"
+depends_on = []
+
+# Package root — public API re-exports
 [[modules]]
 path = "terok_agent"
-depends_on = []
+depends_on = [
+    "terok_agent.agent_config",
+    "terok_agent.agents",
+    "terok_agent.auth",
+    "terok_agent.config_stack",
+    "terok_agent.headless_providers",
+    "terok_agent.instructions",
+]
