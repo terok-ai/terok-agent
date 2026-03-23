@@ -83,6 +83,7 @@ depends_on = []
 [[modules]]
 path = "terok_agent"
 depends_on = [
+    "terok_agent._util",
     "terok_agent.agent_config",
     "terok_agent.agents",
     "terok_agent.auth",
