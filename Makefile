@@ -45,9 +45,7 @@ tach:
 	poetry run tach check
 
 # Run SAST security scan
-security:
-	mkdir -p $(REPORTS_DIR)
-	poetry run bandit -r src/terok_agent/ --exit-zero -f json -o $(BANDIT_REPORT)
+security: bandit-report
 	poetry run bandit -r src/terok_agent/ -ll
 
 # Check docstring coverage (minimum 95%)
@@ -97,5 +95,5 @@ docs-build:
 
 # Clean build artifacts
 clean:
-	rm -rf dist/ build/ site/ reports/ .coverage .pytest_cache/ .ruff_cache/ .complexipy_cache/
+	rm -rf dist/ build/ site/ $(REPORTS_DIR) .coverage .pytest_cache/ .ruff_cache/ .complexipy_cache/
 	find . -type d -name __pycache__ -exec rm -rf {} + 2>/dev/null || true

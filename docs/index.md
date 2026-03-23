@@ -10,18 +10,22 @@ manages the lifecycle of one AI coding agent at a time.  It sits between
 isolation) and [terok](https://github.com/terok-ai/terok) (project
 orchestration) in the dependency chain:
 
-```
+```text
 terok → terok-agent → terok-sandbox → terok-shield
 ```
 
-## Quick start
+!!! note "Early development"
+    This package currently provides only the project scaffold and a stub CLI.
+    The features and commands listed below are planned — not yet implemented.
+
+## Quick start (planned)
 
 ```bash
 pip install terok-agent
 terok-agent run claude .
 ```
 
-## Features
+## Planned features
 
 - **Agent registry** — YAML-driven agent definitions (Claude, Codex, Copilot, …)
 - **Image building** — parametrized L0 (base) + L1 (agent) Dockerfile layers
