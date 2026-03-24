@@ -102,34 +102,43 @@ def _handle_run(
     timeout: int = 1800,
     interactive: bool = False,
     web: bool = False,
-    port: int = 8080,
+    port: int | None = None,
     gate: bool = True,
     no_gate: bool = False,
     branch: str | None = None,
     name: str | None = None,
+    restricted: bool = False,
+    gpu: bool = False,
+    bypass_shield_no_protection: bool = False,
 ) -> None:
     """Run an agent in a hardened container."""
     from .runner import AgentRunner
 
     effective_gate = gate and not no_gate
     runner = AgentRunner()
+    common = {
+        "gate": effective_gate,
+        "name": name,
+        "branch": branch,
+        "unrestricted": not restricted,
+        "gpu": gpu,
+        "bypass_shield": bypass_shield_no_protection,
+    }
 
     if web:
-        cname = runner.run_web(repo, port=port, branch=branch, gate=effective_gate, name=name)
+        cname = runner.run_web(repo, port=port, **common)
     elif interactive:
-        cname = runner.run_interactive(agent, repo, branch=branch, gate=effective_gate, name=name)
+        cname = runner.run_interactive(agent, repo, **common)
     elif prompt:
         cname = runner.run_headless(
             agent,
             repo,
             prompt=prompt,
-            branch=branch,
             model=model,
             max_turns=max_turns,
             timeout=timeout,
-            gate=effective_gate,
-            name=name,
             follow=True,
+            **common,
         )
     else:
         raise SystemExit(
@@ -199,6 +208,17 @@ RUN_COMMAND = CommandDef(
         ArgDef(name="--no-gate", action="store_true", help="Disable gate (direct network)"),
         ArgDef(name="--branch", help="Git branch to check out"),
         ArgDef(name="--name", help="Container name override"),
+        ArgDef(
+            name="--restricted",
+            action="store_true",
+            help="Restrict agent permissions (no auto-approve, no-new-privileges)",
+        ),
+        ArgDef(name="--gpu", action="store_true", help="Enable GPU passthrough"),
+        ArgDef(
+            name="--bypass-shield-no-protection",
+            action="store_true",
+            help="DANGEROUS: disable egress firewall entirely",
+        ),
     ),
 )
 

@@ -222,8 +222,22 @@ class AgentRunner:
         task_dir: Path,
         name: str | None = None,
         extra_args: list[str] | None = None,
+        unrestricted: bool = True,
+        gpu: bool = False,
+        bypass_shield: bool = False,
     ) -> str:
-        """Assemble and execute the podman run command. Returns container name."""
+        """Assemble and execute the podman run command. Returns container name.
+
+        Security flags:
+        - *unrestricted*: when False, adds ``--security-opt no-new-privileges``
+          to limit what the agent can do inside the container.
+        - *bypass_shield*: skip shield entirely, fall back to podman's default
+          networking.  Deliberately named to be loud — this disables the egress
+          firewall.
+        - *gpu*: pass GPU device args to podman (``--device nvidia.com/gpu=all``).
+        """
+        from terok_sandbox import gpu_run_args
+
         from terok_agent._util import podman_userns_args
 
         cname = name or f"terok-agent-{task_id}"
@@ -231,12 +245,23 @@ class AgentRunner:
         cmd = ["podman", "run", "-d"]
         cmd += podman_userns_args()
 
-        # Shield integration — best-effort; runs without if hooks aren't installed
-        try:
-            shield_args = self.sandbox.pre_start_args(cname, task_dir)
-            cmd += shield_args
-        except (OSError, FileNotFoundError, SystemExit):
-            pass
+        if not unrestricted:
+            cmd += ["--security-opt", "no-new-privileges"]
+
+        # Shield integration
+        if bypass_shield:
+            print(
+                "\n!! SHIELD BYPASSED — egress firewall DISABLED "
+                "(--bypass-shield-no-protection) !!\n"
+            )
+        else:
+            try:
+                shield_args = self.sandbox.pre_start_args(cname, task_dir)
+                cmd += shield_args
+            except (OSError, FileNotFoundError, SystemExit):
+                pass
+
+        cmd += gpu_run_args(enabled=gpu)
 
         if extra_args:
             cmd += extra_args
@@ -278,6 +303,9 @@ class AgentRunner:
         gate: bool = True,
         name: str | None = None,
         follow: bool = False,
+        unrestricted: bool = True,
+        gpu: bool = False,
+        bypass_shield: bool = False,
     ) -> str:
         """Launch a headless agent run. Returns container name.
 
@@ -297,6 +325,9 @@ class AgentRunner:
             name=name,
             follow=follow,
             mode="headless",
+            unrestricted=unrestricted,
+            gpu=gpu,
+            bypass_shield=bypass_shield,
         )
 
     def run_interactive(
@@ -307,6 +338,9 @@ class AgentRunner:
         branch: str | None = None,
         gate: bool = True,
         name: str | None = None,
+        unrestricted: bool = True,
+        gpu: bool = False,
+        bypass_shield: bool = False,
     ) -> str:
         """Launch an interactive container. Returns container name.
 
@@ -319,6 +353,9 @@ class AgentRunner:
             gate=gate,
             name=name,
             mode="interactive",
+            unrestricted=unrestricted,
+            gpu=gpu,
+            bypass_shield=bypass_shield,
         )
 
     def run_web(
@@ -330,6 +367,9 @@ class AgentRunner:
         gate: bool = True,
         name: str | None = None,
         public_url: str | None = None,
+        unrestricted: bool = True,
+        gpu: bool = False,
+        bypass_shield: bool = False,
     ) -> str:
         """Launch a toad web container. Returns container name.
 
@@ -348,6 +388,9 @@ class AgentRunner:
             mode="web",
             port=port,
             public_url=public_url,
+            unrestricted=unrestricted,
+            gpu=gpu,
+            bypass_shield=bypass_shield,
         )
 
     def _run(
@@ -366,6 +409,9 @@ class AgentRunner:
         follow: bool = False,
         port: int | None = None,
         public_url: str | None = None,
+        unrestricted: bool = True,
+        gpu: bool = False,
+        bypass_shield: bool = False,
     ) -> str:
         """Unified launch flow for all three modes."""
         from .headless_providers import build_headless_command
@@ -419,9 +465,10 @@ class AgentRunner:
         # Agent config mount
         volumes.append(f"{agent_config_dir}:/home/dev/.terok:Z")
 
-        # Unrestricted mode (auto-approve all agents)
-        env["TEROK_UNRESTRICTED"] = "1"
-        env.update(self.registry.collect_all_auto_approve_env())
+        # Permission mode — unrestricted enables auto-approve for all agents
+        if unrestricted:
+            env["TEROK_UNRESTRICTED"] = "1"
+            env.update(self.registry.collect_all_auto_approve_env())
 
         # Build command based on mode
         extra_args: list[str] = []
@@ -452,6 +499,9 @@ class AgentRunner:
             task_dir=task_dir,
             name=name,
             extra_args=extra_args or None,
+            unrestricted=unrestricted,
+            gpu=gpu,
+            bypass_shield=bypass_shield,
         )
 
         # Follow output if requested
