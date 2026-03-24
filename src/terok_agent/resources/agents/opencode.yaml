@@ -28,8 +28,9 @@ capabilities:
   log_format: plain
 
 # Shared state dirs for OpenCode runtime (persist across container runs).
-# All OpenCode-based agents (blablador, kisski) inherit these implicitly
-# since they run on top of OpenCode.
+# Defined here once — the registry deduplicates by host_dir, so all
+# OpenCode-based agents (blablador, kisski) get these mounts without
+# repeating them in their own YAML files.
 mounts:
   - host_dir: _opencode-config
     container_path: /home/dev/.config/opencode

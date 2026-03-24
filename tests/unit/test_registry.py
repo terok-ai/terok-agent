@@ -237,6 +237,7 @@ class TestLoadRegistry:
         mount_dirs = {m.host_dir for m in reg.mounts}
         assert "_opencode-config" in mount_dirs
         assert "_opencode-data" in mount_dirs
+        assert "_opencode-state" in mount_dirs
         assert "_toad-config" in mount_dirs
 
     def test_mounts_deduplicated(self) -> None:

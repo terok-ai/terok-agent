@@ -35,14 +35,5 @@ opencode:
   config_dir: .kisski
   auth_key_url: https://chat-ai.academiccloud.de/
 
-# OpenCode runtime state (shared with all OpenCode-based agents)
-mounts:
-  - host_dir: _opencode-config
-    container_path: /home/dev/.config/opencode
-    label: OpenCode config
-  - host_dir: _opencode-data
-    container_path: /home/dev/.local/share/opencode
-    label: OpenCode data
-  - host_dir: _opencode-state
-    container_path: /home/dev/.local/state
-    label: OpenCode state
+# OpenCode runtime mounts are defined in opencode.yaml and deduplicated
+# by the registry — no need to repeat them here.
