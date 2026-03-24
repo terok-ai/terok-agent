@@ -134,6 +134,52 @@ class TestAgentRunner:
         idx = cmd.index("-p")
         assert "9999:8080" in cmd[idx + 1]
 
+    def test_run_web_auto_allocates_port(self, tmp_path: Path) -> None:
+        runner = AgentRunner(sandbox=_mock_sandbox())
+
+        with (
+            patch.object(runner, "_ensure_images", return_value="terok-l1-cli:test"),
+            patch("terok_sandbox.find_free_port", return_value=12345),
+            patch("subprocess.run") as mock_run,
+        ):
+            runner.run_web(str(tmp_path))  # no port= arg
+
+        cmd = mock_run.call_args[0][0]
+        assert "-p" in cmd
+        idx = cmd.index("-p")
+        assert "12345:8080" in cmd[idx + 1]
+
+    def test_launch_redacts_code_repo(self, tmp_path: Path) -> None:
+        runner = AgentRunner(sandbox=_mock_sandbox())
+
+        with (
+            patch.object(runner, "_ensure_images", return_value="terok-l1-cli:test"),
+            patch("subprocess.run") as mock_run,
+            patch("builtins.print") as mock_print,
+        ):
+            runner.run_headless(
+                "claude",
+                "git@github.com:user/repo.git",
+                prompt="test",
+                gate=False,
+                follow=False,
+            )
+
+        # The printed command should have CODE_REPO redacted
+        printed = mock_print.call_args[0][1]
+        assert "CODE_REPO=<redacted>" in printed
+        # But the actual podman command should have the real value
+        cmd = mock_run.call_args[0][0]
+        assert any("CODE_REPO=git@github.com:user/repo.git" in arg for arg in cmd)
+
+    def test_lazy_sandbox_init(self) -> None:
+        runner = AgentRunner()
+        # Access sandbox property — should create a default Sandbox
+        with patch("terok_sandbox.Sandbox") as mock_cls:
+            mock_cls.return_value = _mock_sandbox()
+            s = runner.sandbox
+            assert s is not None
+
 
 class TestGateIntegration:
     """Verify gate wiring in AgentRunner."""
