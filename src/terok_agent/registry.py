@@ -149,13 +149,13 @@ def _to_headless_provider(name: str, data: dict) -> HeadlessProvider:
     )
 
 
-def _to_auth_provider(name: str, data: dict) -> AuthProvider:
+def _to_auth_provider(name: str, data: dict) -> AuthProvider | None:
     """Deserialize the ``auth:`` YAML section into an ``AuthProvider``."""
     from .auth import AuthKeyConfig, AuthProvider, _api_key_command
 
     auth = data.get("auth", {})
     if not auth:
-        return None  # type: ignore[return-value]
+        return None
 
     # Determine command: explicit command list, or build from auth_key config
     auth_key_data = auth.get("auth_key")
@@ -173,7 +173,7 @@ def _to_auth_provider(name: str, data: dict) -> AuthProvider:
             )
         )
     else:
-        return None  # type: ignore[return-value]
+        return None
 
     return AuthProvider(
         name=name,

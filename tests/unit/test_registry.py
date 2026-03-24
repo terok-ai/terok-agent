@@ -19,6 +19,15 @@ from terok_agent.registry import (
     load_registry,
 )
 
+
+@pytest.fixture(autouse=True)
+def _isolate_user_agents_dir(tmp_path: Path) -> None:
+    """Prevent real ~/.config/terok-agent/agents/ from leaking into tests."""
+    isolated = tmp_path / "empty-agents"
+    with patch("terok_agent.registry._user_agents_dir", return_value=isolated):
+        yield
+
+
 # ---------------------------------------------------------------------------
 # Bundled YAML loading
 # ---------------------------------------------------------------------------
