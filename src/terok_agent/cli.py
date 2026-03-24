@@ -44,15 +44,16 @@ def _cmd_agents(args: argparse.Namespace) -> None:
 def main() -> None:
     """Run the terok-agent CLI."""
     parser = argparse.ArgumentParser(prog="terok-agent", description="Single-agent task runner")
-    sub = parser.add_subparsers(dest="command")
+    sub = parser.add_subparsers()
 
     # agents
     agents_p = sub.add_parser("agents", help="List registered agents")
     agents_p.add_argument("--all", action="store_true", help="Include tools (gh, glab)")
+    agents_p.set_defaults(func=_cmd_agents)
 
     args = parser.parse_args()
-    if args.command == "agents":
-        _cmd_agents(args)
+    if hasattr(args, "func"):
+        args.func(args)
     else:
         parser.print_help()
         raise SystemExit(1)

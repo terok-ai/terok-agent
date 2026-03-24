@@ -70,9 +70,10 @@ class TestAgentsCommand:
         """Header and data columns should be aligned."""
         out, _, _ = _run_cli("agents")
         lines = out.strip().split("\n")
-        header_name_end = lines[0].index("LABEL")
+        assert "LABEL" in lines[0], "Header missing LABEL column"
+        label_col = lines[0].index("LABEL")
         for line in lines[1:]:
-            assert len(line) >= header_name_end, f"Short line: {line!r}"
+            assert len(line) >= label_col, f"Short line: {line!r}"
 
     def test_unknown_subcommand_exits_nonzero(self) -> None:
         _, _, rc = _run_cli("nonexistent")
