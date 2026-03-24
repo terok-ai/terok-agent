@@ -12,7 +12,7 @@ import sys
 
 def _cmd_agents(args: argparse.Namespace) -> None:
     """List registered agents (and optionally tools)."""
-    from .registry import get_registry
+    from .registry import _load_bundled_agents, _load_user_agents, get_registry
 
     reg = get_registry()
     names = reg.all_names if args.all else reg.agent_names
@@ -21,34 +21,24 @@ def _cmd_agents(args: argparse.Namespace) -> None:
         print("No agents registered.", file=sys.stderr)
         return
 
-    # Collect rows: (name, label, kind/tier)
+    # Read raw YAML for kind metadata
+    raw = _load_bundled_agents()
+    raw.update(_load_user_agents())
+
     rows: list[tuple[str, str, str]] = []
     for name in sorted(names):
         p = reg.providers.get(name)
         auth = reg.auth_providers.get(name)
         label = p.label if p else (auth.label if auth else name)
-        if p:
-            rows.append((name, label, f"tier {_tier(name)}"))
-        else:
-            rows.append((name, label, "tool"))
+        kind = raw.get(name, {}).get("kind", "native")
+        rows.append((name, label, kind))
 
-    # Column widths
     w_name = max(len(r[0]) for r in rows)
     w_label = max(len(r[1]) for r in rows)
 
-    header = f"{'NAME':<{w_name}}  {'LABEL':<{w_label}}  TYPE"
-    print(header)
+    print(f"{'NAME':<{w_name}}  {'LABEL':<{w_label}}  TYPE")
     for name, label, kind in rows:
         print(f"{name:<{w_name}}  {label:<{w_label}}  {kind}")
-
-
-def _tier(name: str) -> int:
-    """Read tier from the raw YAML data for an agent."""
-    from .registry import _load_bundled_agents, _load_user_agents
-
-    raw = _load_bundled_agents()
-    raw.update(_load_user_agents())
-    return raw.get(name, {}).get("tier", 0)
 
 
 def main() -> None:

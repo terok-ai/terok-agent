@@ -52,15 +52,14 @@ class TestLoadBundledAgents:
         assert set(agents.keys()) == expected
 
     def test_each_agent_has_kind(self) -> None:
+        valid_kinds = {"native", "opencode", "bridge", "tool"}
         for name, data in _load_bundled_agents().items():
             assert "kind" in data, f"{name}.yaml missing 'kind' field"
-            assert data["kind"] in {"agent", "tool"}, (
-                f"{name}.yaml has invalid kind={data['kind']!r}"
-            )
+            assert data["kind"] in valid_kinds, f"{name}.yaml has invalid kind={data['kind']!r}"
 
     def test_agents_have_required_sections(self) -> None:
         for name, data in _load_bundled_agents().items():
-            if data["kind"] != "agent":
+            if data["kind"] == "tool":
                 continue
             assert "label" in data, f"{name}: missing label"
             assert "binary" in data, f"{name}: missing binary"

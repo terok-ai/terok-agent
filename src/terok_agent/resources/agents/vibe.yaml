@@ -1,10 +1,9 @@
 # SPDX-FileCopyrightText: 2026 Jiri Vyskocil
 # SPDX-License-Identifier: Apache-2.0
 
-kind: agent
+kind: native
 label: Mistral Vibe
 binary: vibe
-tier: 1
 
 git_identity:
   name: Vibe

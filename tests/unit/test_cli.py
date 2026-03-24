@@ -35,6 +35,17 @@ class TestAgentsCommand:
         assert "glab" in result.stdout
         assert "tool" in result.stdout
 
+    def test_agents_shows_kind_types(self) -> None:
+        result = subprocess.run(
+            [sys.executable, "-m", "terok_agent.cli", "agents", "--all"],
+            capture_output=True,
+            text=True,
+        )
+        assert "native" in result.stdout
+        assert "opencode" in result.stdout
+        assert "bridge" in result.stdout
+        assert "tool" in result.stdout
+
     def test_agents_has_header(self) -> None:
         result = subprocess.run(
             [sys.executable, "-m", "terok_agent.cli", "agents"],

@@ -323,10 +323,12 @@ def load_registry() -> AgentRegistry:
     all_names: list[str] = []
 
     for name, data in sorted(raw.items()):
-        kind = data.get("kind", "agent")
+        kind = data.get("kind", "native")
         all_names.append(name)
 
-        if kind == "agent":
+        # Agent kinds (native, opencode, bridge) get a HeadlessProvider;
+        # tools only contribute auth.
+        if kind != "tool":
             agent_names.append(name)
             providers[name] = _to_headless_provider(name, data)
 
@@ -334,7 +336,7 @@ def load_registry() -> AgentRegistry:
         auth_prov = _to_auth_provider(name, data)
         if auth_prov is not None:
             auth_providers[name] = auth_prov
-        elif kind == "agent":
+        elif kind != "tool":
             # Auto-derive from opencode config if present
             oc_auth = _derive_opencode_auth(name, data)
             if oc_auth is not None:
