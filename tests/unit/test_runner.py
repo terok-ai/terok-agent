@@ -135,6 +135,70 @@ class TestAgentRunner:
         assert "9999:8080" in cmd[idx + 1]
 
 
+class TestGateIntegration:
+    """Verify gate wiring in AgentRunner."""
+
+    def test_setup_gate_calls_sandbox(self) -> None:
+        sandbox = _mock_sandbox()
+        sandbox.ensure_gate.return_value = None
+        sandbox.create_token.return_value = "tok123"
+        sandbox.gate_url.return_value = "http://tok123@host:9418/repo"
+        runner = AgentRunner(sandbox=sandbox)
+
+        with patch("terok_sandbox.GitGate") as mock_gate_cls:
+            mock_gate = Mock()
+            mock_gate_cls.return_value = mock_gate
+            url = runner._setup_gate("git@github.com:user/repo.git", "task1")
+
+        mock_gate.sync.assert_called_once()
+        sandbox.ensure_gate.assert_called_once()
+        sandbox.create_token.assert_called_once()
+        assert url == "http://tok123@host:9418/repo"
+
+    def test_gate_true_with_git_url_uses_gate(self, tmp_path: Path) -> None:
+        sandbox = _mock_sandbox()
+        runner = AgentRunner(sandbox=sandbox)
+
+        with (
+            patch.object(runner, "_ensure_images", return_value="terok-l1-cli:test"),
+            patch.object(
+                runner, "_setup_gate", return_value="http://tok@host:9418/repo"
+            ) as mock_gate,
+            patch("subprocess.run"),
+        ):
+            runner.run_headless(
+                "claude",
+                "git@github.com:user/repo.git",
+                prompt="test",
+                gate=True,
+                follow=False,
+            )
+
+        mock_gate.assert_called_once_with("git@github.com:user/repo.git", mock_gate.call_args[0][1])
+
+    def test_gate_false_skips_gate(self, tmp_path: Path) -> None:
+        sandbox = _mock_sandbox()
+        runner = AgentRunner(sandbox=sandbox)
+
+        with (
+            patch.object(runner, "_ensure_images", return_value="terok-l1-cli:test"),
+            patch.object(runner, "_setup_gate") as mock_gate,
+            patch("subprocess.run") as mock_run,
+        ):
+            runner.run_headless(
+                "claude",
+                "git@github.com:user/repo.git",
+                prompt="test",
+                gate=False,
+                follow=False,
+            )
+
+        mock_gate.assert_not_called()
+        # CODE_REPO should be the raw URL
+        cmd = mock_run.call_args[0][0]
+        assert any("git@github.com:user/repo.git" in arg for arg in cmd)
+
+
 class TestCommandRegistry:
     """Verify the command registry is well-formed."""
 
