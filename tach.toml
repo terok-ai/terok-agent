@@ -88,12 +88,33 @@ depends_on = [
 path = "terok_agent.build"
 depends_on = []
 
-# CLI entry point
+# Agent runner facade — composes sandbox + agent config + container launch
+[[modules]]
+path = "terok_agent.runner"
+depends_on = [
+    "terok_agent._util",
+    "terok_agent.agents",
+    "terok_agent.build",
+    "terok_agent.headless_providers",
+    "terok_agent.instructions",
+    "terok_agent.registry",
+]
+
+# Command registry — defines all CLI commands
+[[modules]]
+path = "terok_agent.commands"
+depends_on = [
+    "terok_agent.auth",
+    "terok_agent.build",
+    "terok_agent.registry",
+    "terok_agent.runner",
+]
+
+# CLI entry point — wires command registry to argparse
 [[modules]]
 path = "terok_agent.cli"
 depends_on = [
-    "terok_agent.build",
-    "terok_agent.registry",
+    "terok_agent.commands",
 ]
 
 # Package root — public API re-exports + registry bootstrap
@@ -104,8 +125,10 @@ depends_on = [
     "terok_agent.agents",
     "terok_agent.auth",
     "terok_agent.build",
+    "terok_agent.commands",
     "terok_agent.config_stack",
     "terok_agent.headless_providers",
     "terok_agent.instructions",
     "terok_agent.registry",
+    "terok_agent.runner",
 ]

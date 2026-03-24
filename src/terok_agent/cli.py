@@ -2,87 +2,75 @@
 # SPDX-FileCopyrightText: 2026 Jiri Vyskocil
 # SPDX-License-Identifier: Apache-2.0
 
-"""CLI entry point for terok-agent."""
+"""CLI entry point for terok-agent.
+
+Built from the command registry in :mod:`terok_agent.commands`.
+No command logic lives here — just argument wiring and dispatch.
+"""
 
 from __future__ import annotations
 
 import argparse
-import sys
+from importlib.metadata import PackageNotFoundError, version as _meta_version
+
+from .commands import COMMANDS, ArgDef, CommandDef
+
+try:
+    __version__ = _meta_version("terok-agent")
+except PackageNotFoundError:
+    __version__ = "0.0.0"
 
 
-def _cmd_agents(args: argparse.Namespace) -> None:
-    """List registered agents (and optionally tools)."""
-    from .registry import _load_bundled_agents, _load_user_agents, get_registry
-
-    reg = get_registry()
-    names = reg.all_names if args.all else reg.agent_names
-
-    if not names:
-        print("No agents registered.", file=sys.stderr)
-        return
-
-    # Read raw YAML for kind metadata
-    raw = _load_bundled_agents()
-    raw.update(_load_user_agents())
-
-    rows: list[tuple[str, str, str]] = []
-    for name in sorted(names):
-        p = reg.providers.get(name)
-        auth = reg.auth_providers.get(name)
-        label = p.label if p else (auth.label if auth else name)
-        kind = raw.get(name, {}).get("kind", "native")
-        rows.append((name, label, kind))
-
-    w_name = max(len("NAME"), max(len(r[0]) for r in rows))
-    w_label = max(len("LABEL"), max(len(r[1]) for r in rows))
-
-    print(f"{'NAME':<{w_name}}  {'LABEL':<{w_label}}  TYPE")
-    for name, label, kind in rows:
-        print(f"{name:<{w_name}}  {label:<{w_label}}  {kind}")
+def _wire_command(sub: argparse._SubParsersAction, cmd: CommandDef) -> None:
+    """Add a :class:`CommandDef` to an argparse subparser group."""
+    p = sub.add_parser(cmd.name, help=cmd.help)
+    for arg in cmd.args:
+        kwargs: dict = {}
+        if arg.help:
+            kwargs["help"] = arg.help
+        if arg.type is not None:
+            kwargs["type"] = arg.type
+        if arg.default is not None:
+            kwargs["default"] = arg.default
+        if arg.action is not None:
+            kwargs["action"] = arg.action
+        if arg.dest is not None:
+            kwargs["dest"] = arg.dest
+        if arg.nargs is not None:
+            kwargs["nargs"] = arg.nargs
+        p.add_argument(arg.name, **kwargs)
+    p.set_defaults(_cmd=cmd)
 
 
-def _cmd_build(args: argparse.Namespace) -> None:
-    """Build L0+L1 container images."""
-    from .build import BuildError, build_base_images
+def _arg_key(arg: ArgDef) -> str:
+    """Derive the kwarg name for an argument definition."""
+    return arg.dest or arg.name.lstrip("-").replace("-", "_")
 
-    try:
-        images = build_base_images(
-            args.base,
-            rebuild=args.rebuild,
-            full_rebuild=args.full_rebuild,
-        )
-    except BuildError as e:
-        raise SystemExit(str(e)) from e
-    print(f"\nL0: {images.l0}")
-    print(f"L1: {images.l1}")
+
+def _dispatch(args: argparse.Namespace) -> None:
+    """Extract handler kwargs from parsed args and call the handler."""
+    cmd: CommandDef = args._cmd
+    if cmd.handler is None:
+        raise SystemExit(f"Command '{cmd.name}' has no handler")
+    kwargs = {_arg_key(arg): getattr(args, _arg_key(arg), arg.default) for arg in cmd.args}
+    cmd.handler(**kwargs)
 
 
 def main() -> None:
     """Run the terok-agent CLI."""
-    parser = argparse.ArgumentParser(prog="terok-agent", description="Single-agent task runner")
+    parser = argparse.ArgumentParser(
+        prog="terok-agent",
+        description="Single-agent task runner for hardened Podman containers",
+    )
+    parser.add_argument("--version", action="version", version=f"terok-agent {__version__}")
     sub = parser.add_subparsers()
 
-    # agents
-    agents_p = sub.add_parser("agents", help="List registered agents")
-    agents_p.add_argument("--all", action="store_true", help="Include tools (gh, glab)")
-    agents_p.set_defaults(func=_cmd_agents)
-
-    # build
-    build_p = sub.add_parser("build", help="Build L0+L1 container images")
-    build_p.add_argument(
-        "--base", default="ubuntu:24.04", help="Base OS image (default: ubuntu:24.04)"
-    )
-    build_p.add_argument(
-        "--rebuild", action="store_true", help="Force rebuild (cache bust agent installs)"
-    )
-    build_p.add_argument(
-        "--full-rebuild", action="store_true", help="Force rebuild with --no-cache --pull=always"
-    )
-    build_p.set_defaults(func=_cmd_build)
+    for cmd in COMMANDS:
+        _wire_command(sub, cmd)
 
     args = parser.parse_args()
-    if hasattr(args, "func"):
-        args.func(args)
+    if hasattr(args, "_cmd"):
+        _dispatch(args)
     else:
         parser.print_help()
         raise SystemExit(1)

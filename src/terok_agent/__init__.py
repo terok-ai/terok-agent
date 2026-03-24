@@ -67,6 +67,9 @@ from .build import (
     stage_toad_agents,
 )
 
+# -- Command registry ----------------------------------------------------------
+from .commands import COMMANDS as AGENT_COMMANDS, CommandDef
+
 # -- Config stack --------------------------------------------------------------
 from .config_stack import ConfigScope, ConfigStack
 
@@ -85,6 +88,9 @@ from .headless_providers import (
 
 # -- Instructions --------------------------------------------------------------
 from .instructions import bundled_default_instructions, resolve_instructions
+
+# -- Runner facade -------------------------------------------------------------
+from .runner import AgentRunner
 
 # -- Bootstrap YAML registry into module-level dicts ---------------------------
 # HEADLESS_PROVIDERS and AUTH_PROVIDERS are empty dicts populated here to avoid
@@ -144,4 +150,9 @@ __all__ = [
     "stage_scripts",
     "stage_toad_agents",
     "stage_tmux_config",
+    # Command registry
+    "AGENT_COMMANDS",
+    "CommandDef",
+    # Runner facade
+    "AgentRunner",
 ]
