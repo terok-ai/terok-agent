@@ -139,35 +139,33 @@ def find_config_path() -> Path | None:
 
 
 def read_config_models(config_path: Path) -> set[str]:
-    """Read model references from config file."""
-    models = set()
+    """Read model references from a Vibe TOML config file."""
+    import tomllib
 
+    models: set[str] = set()
     try:
-        with open(config_path, encoding="utf-8") as f:
-            content = f.read()
-
-        # Simple parsing for model references
-        # Look for patterns like: model = "model-name"
-        # or models = ["model1", "model2"]
-
-        import re
-
-        # Single model pattern
-        single_model_matches = re.findall(r'model\s*=\s*"([^"]+)"', content)
-        for model in single_model_matches:
-            models.add(model)
-
-        # Array of models pattern
-        array_matches = re.findall(r"models\s*=\s*\[([^\]]+)\]", content)
-        for match in array_matches:
-            # Extract quoted strings from the array
-            array_models = re.findall(r'"([^"]+)"', match)
-            for model in array_models:
-                models.add(model)
-
+        with open(config_path, "rb") as f:
+            config = tomllib.load(f)
     except Exception as e:
         print(f"Warning: Could not read config file: {e}", file=sys.stderr)
+        return models
 
+    def _collect(obj: object) -> None:
+        """Walk the parsed TOML and collect all string values under 'model'/'models' keys."""
+        if isinstance(obj, dict):
+            for key, val in obj.items():
+                if key in ("model", "models"):
+                    if isinstance(val, str):
+                        models.add(val)
+                    elif isinstance(val, list):
+                        models.update(v for v in val if isinstance(v, str))
+                else:
+                    _collect(val)
+        elif isinstance(obj, list):
+            for item in obj:
+                _collect(item)
+
+    _collect(config)
     return models
 
 
