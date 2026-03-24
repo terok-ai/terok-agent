@@ -33,8 +33,8 @@ def _cmd_agents(args: argparse.Namespace) -> None:
         kind = raw.get(name, {}).get("kind", "native")
         rows.append((name, label, kind))
 
-    w_name = max(len(r[0]) for r in rows)
-    w_label = max(len(r[1]) for r in rows)
+    w_name = max(len("NAME"), max(len(r[0]) for r in rows))
+    w_label = max(len("LABEL"), max(len(r[1]) for r in rows))
 
     print(f"{'NAME':<{w_name}}  {'LABEL':<{w_label}}  TYPE")
     for name, label, kind in rows:
