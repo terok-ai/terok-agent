@@ -41,10 +41,19 @@ def _resolve_repo(repo: str) -> tuple[str | None, Path | None]:
     """Classify *repo* as a git URL or local path.
 
     Returns ``(code_repo, local_path)`` — exactly one is non-None.
+    Raises ``SystemExit`` for ambiguous local paths (look like paths but
+    don't exist).
     """
-    p = Path(repo).resolve()
+    # Heuristic: if it looks like a local path (starts with /, ./, ~, or has
+    # no : before /), check existence
+    p = Path(repo).expanduser()
     if p.is_dir():
-        return None, p
+        return None, p.resolve()
+    # If it looks like a local path but doesn't exist, fail early
+    if repo.startswith(("/", "./", "../", "~")) or (
+        not repo.startswith("git@") and "://" not in repo and ":" not in repo
+    ):
+        raise SystemExit(f"Local path not found: {repo}")
     # Treat as git URL (SSH, HTTPS, or file://)
     return repo, None
 
@@ -178,12 +187,11 @@ class AgentRunner:
         cmd = ["podman", "run", "-d"]
         cmd += podman_userns_args()
 
-        # Shield integration
+        # Shield integration — best-effort; runs without if hooks aren't installed
         try:
             shield_args = self.sandbox.pre_start_args(cname, task_dir)
             cmd += shield_args
-        except Exception:
-            # Shield not available — run without it (e.g. no hooks installed)
+        except (OSError, FileNotFoundError, SystemExit):
             pass
 
         if extra_args:
@@ -330,13 +338,16 @@ class AgentRunner:
             env["GIT_BRANCH"] = branch
 
         # Repo access: local bind-mount or git clone
+        # TODO: when gate=True and code_repo is set, use sandbox gate server
+        # to mirror the repo and construct an HTTP gate URL instead of passing
+        # code_repo directly.  This requires: sandbox.ensure_gate(),
+        # GitGate.sync(), sandbox.create_token(), sandbox.gate_url().
+        # For now, code_repo is passed directly regardless of the gate flag.
         volumes: list[str] = []
         if local_path:
             volumes.append(f"{local_path}:/workspace:Z")
         elif code_repo:
-            # Git URL — container clones via init script
             env["CODE_REPO"] = code_repo
-            # Create workspace volume
             workspace = task_dir / "workspace"
             workspace.mkdir(parents=True, exist_ok=True)
             volumes.append(f"{workspace}:/workspace:Z")

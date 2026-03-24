@@ -46,14 +46,14 @@ class CommandDef:
 # ---------------------------------------------------------------------------
 
 
-def _handle_agents(*, all: bool = False) -> None:
+def _handle_agents(*, show_all: bool = False) -> None:
     """List registered agents."""
     import sys
 
     from .registry import _load_bundled_agents, _load_user_agents, get_registry
 
     reg = get_registry()
-    names = reg.all_names if all else reg.agent_names
+    names = reg.all_names if show_all else reg.agent_names
 
     if not names:
         print("No agents registered.", file=sys.stderr)
@@ -165,9 +165,13 @@ def _handle_ls() -> None:
 
 
 def _handle_stop(*, name: str) -> None:
-    """Stop a running container."""
-    from terok_sandbox import stop_task_containers
+    """Stop a running container (best-effort)."""
+    from terok_sandbox import get_container_state, stop_task_containers
 
+    state = get_container_state(name)
+    if state is None:
+        print(f"Container not found: {name}")
+        return
     stop_task_containers([name])
     print(f"Stopped: {name}")
 
@@ -208,7 +212,9 @@ AGENTS_COMMAND = CommandDef(
     name="agents",
     help="List registered agents",
     handler=_handle_agents,
-    args=(ArgDef(name="--all", action="store_true", help="Include tools (gh, glab)"),),
+    args=(
+        ArgDef(name="--all", action="store_true", dest="show_all", help="Include tools (gh, glab)"),
+    ),
 )
 
 BUILD_COMMAND = CommandDef(

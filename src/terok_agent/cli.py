@@ -13,7 +13,7 @@ from __future__ import annotations
 import argparse
 from importlib.metadata import PackageNotFoundError, version as _meta_version
 
-from .commands import COMMANDS, CommandDef
+from .commands import COMMANDS, ArgDef, CommandDef
 
 try:
     __version__ = _meta_version("terok-agent")
@@ -42,19 +42,17 @@ def _wire_command(sub: argparse._SubParsersAction, cmd: CommandDef) -> None:
     p.set_defaults(_cmd=cmd)
 
 
+def _arg_key(arg: ArgDef) -> str:
+    """Derive the kwarg name for an argument definition."""
+    return arg.dest or arg.name.lstrip("-").replace("-", "_")
+
+
 def _dispatch(args: argparse.Namespace) -> None:
     """Extract handler kwargs from parsed args and call the handler."""
     cmd: CommandDef = args._cmd
     if cmd.handler is None:
         raise SystemExit(f"Command '{cmd.name}' has no handler")
-    kwargs = {
-        arg.dest or arg.name.lstrip("-").replace("-", "_"): getattr(
-            args,
-            arg.dest or arg.name.lstrip("-").replace("-", "_"),
-            arg.default,
-        )
-        for arg in cmd.args
-    }
+    kwargs = {_arg_key(arg): getattr(args, _arg_key(arg), arg.default) for arg in cmd.args}
     cmd.handler(**kwargs)
 
 

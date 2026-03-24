@@ -8,6 +8,8 @@ from __future__ import annotations
 from pathlib import Path
 from unittest.mock import Mock, patch
 
+import pytest
+
 from terok_agent.runner import AgentRunner, _generate_task_id, _resolve_repo
 
 
@@ -28,6 +30,10 @@ class TestResolveRepo:
         code_repo, local_path = _resolve_repo("https://github.com/user/repo.git")
         assert code_repo == "https://github.com/user/repo.git"
         assert local_path is None
+
+    def test_nonexistent_local_path_exits(self) -> None:
+        with pytest.raises(SystemExit, match="not found"):
+            _resolve_repo("./nonexistent-dir-xyz")
 
 
 class TestTaskId:
