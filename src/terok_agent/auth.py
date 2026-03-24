@@ -21,8 +21,6 @@ from pathlib import Path
 
 from ._util import ensure_dir_writable, podman_userns_args
 
-_LOCALHOST = "127.0.0.1"
-
 # ---------------------------------------------------------------------------
 # Provider descriptor
 # ---------------------------------------------------------------------------
@@ -98,128 +96,11 @@ def _api_key_command(cfg: AuthKeyConfig) -> list[str]:
 
 
 # ---------------------------------------------------------------------------
-# Provider registry
+# Provider registry — populated from YAML by __init__.py at package load time
 # ---------------------------------------------------------------------------
 
 AUTH_PROVIDERS: dict[str, AuthProvider] = {}
-"""All known auth providers, keyed by name."""
-
-_ALL_PROVIDERS: list[AuthProvider] = [
-    AuthProvider(
-        name="codex",
-        label="Codex",
-        host_dir_name="_codex-config",
-        container_mount="/home/dev/.codex",
-        command=["setup-codex-auth.sh"],
-        banner_hint=(
-            "This will set up port forwarding (using socat) and open a browser "
-            "for authentication.\n"
-            "After completing authentication, press Ctrl+C to stop the container."
-        ),
-        extra_run_args=("-p", f"{_LOCALHOST}:1455:1455"),
-    ),
-    AuthProvider(
-        name="claude",
-        label="Claude",
-        host_dir_name="_claude-config",
-        container_mount="/home/dev/.claude",
-        command=_api_key_command(
-            AuthKeyConfig(
-                label="Claude",
-                key_url="https://console.anthropic.com/settings/keys",
-                env_var="ANTHROPIC_API_KEY",
-                config_path="~/.claude/config.json",
-                printf_template='{"api_key": "%s"}',
-                tool_name="claude",
-            )
-        ),
-        banner_hint=(
-            "You will be prompted to enter your Claude API key.\n"
-            "Get your API key at: https://console.anthropic.com/settings/keys"
-        ),
-    ),
-    AuthProvider(
-        name="mistral",
-        label="Mistral Vibe",
-        host_dir_name="_vibe-config",
-        container_mount="/home/dev/.vibe",
-        command=_api_key_command(
-            AuthKeyConfig(
-                label="Mistral",
-                key_url="https://console.mistral.ai/api-keys",
-                env_var="MISTRAL_API_KEY",
-                config_path="~/.vibe/.env",
-                printf_template="MISTRAL_API_KEY=%s",
-                tool_name="vibe",
-            )
-        ),
-        banner_hint=(
-            "You will be prompted to enter your Mistral API key.\n"
-            "Get your API key at: https://console.mistral.ai/api-keys"
-        ),
-    ),
-    AuthProvider(
-        name="gh",
-        label="GitHub CLI",
-        host_dir_name="_gh-config",
-        container_mount="/home/dev/.config/gh",
-        command=["gh", "auth", "login"],
-        banner_hint=(
-            "You will be guided through GitHub authentication.\n"
-            "Recommended: choose 'Login with a web browser' or paste a token."
-        ),
-    ),
-    AuthProvider(
-        name="glab",
-        label="GitLab CLI",
-        host_dir_name="_glab-config",
-        container_mount="/home/dev/.config/glab-cli",
-        command=["glab", "auth", "login"],
-        banner_hint=(
-            "You will be guided through GitLab authentication.\n"
-            "You will need a GitLab personal access token.\n"
-            "Create one at: https://gitlab.com/-/user_settings/personal_access_tokens"
-        ),
-    ),
-]
-
-for _p in _ALL_PROVIDERS:
-    if _p.name in AUTH_PROVIDERS:
-        raise RuntimeError(f"Duplicate auth provider name: {_p.name!r}")
-    AUTH_PROVIDERS[_p.name] = _p
-
-
-def _register_opencode_auth_providers() -> None:
-    """Dynamically register auth providers for OpenCode-based wrappers."""
-    from terok_agent.headless_providers import HEADLESS_PROVIDERS
-
-    for p in HEADLESS_PROVIDERS.values():
-        if p.opencode_config is None or p.name in AUTH_PROVIDERS:
-            continue
-        oc = p.opencode_config
-        AUTH_PROVIDERS[p.name] = AuthProvider(
-            name=p.name,
-            label=p.label,
-            host_dir_name=f"_{p.name}-config",
-            container_mount=f"/home/dev/{oc.config_dir}",
-            command=_api_key_command(
-                AuthKeyConfig(
-                    label=p.label,
-                    key_url=oc.auth_key_url,
-                    env_var=f"{oc.env_var_prefix}_API_KEY",
-                    config_path=f"~/{oc.config_dir}/config.json",
-                    printf_template='{"api_key": "%s"}',
-                    tool_name=p.name,
-                )
-            ),
-            banner_hint=(
-                f"You will be prompted to enter your {p.label} API key.\n"
-                f"Get your API key at: {oc.auth_key_url}"
-            ),
-        )
-
-
-_register_opencode_auth_providers()
+"""All known auth providers (agents + tools), keyed by name.  Loaded from ``resources/agents/*.yaml``."""
 
 
 # ---------------------------------------------------------------------------

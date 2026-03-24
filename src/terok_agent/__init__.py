@@ -73,6 +73,25 @@ from .headless_providers import (
 # -- Instructions --------------------------------------------------------------
 from .instructions import bundled_default_instructions, resolve_instructions
 
+# -- Bootstrap YAML registry into module-level dicts ---------------------------
+# HEADLESS_PROVIDERS and AUTH_PROVIDERS are empty dicts populated here to avoid
+# circular imports (registry → auth/headless_providers → registry).
+
+
+def _bootstrap_registry() -> None:
+    """Populate module-level provider dicts from the YAML registry."""
+    import terok_agent.headless_providers as _hp
+
+    from .registry import get_registry
+
+    reg = get_registry()
+    HEADLESS_PROVIDERS.update(reg.providers)
+    AUTH_PROVIDERS.update(reg.auth_providers)
+    _hp.PROVIDER_NAMES = reg.agent_names
+
+
+_bootstrap_registry()
+
 __all__ = [
     "__version__",
     # Provider registry

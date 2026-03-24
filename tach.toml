@@ -71,7 +71,6 @@ depends_on = [
 path = "terok_agent.auth"
 depends_on = [
     "terok_agent._util",
-    "terok_agent.headless_providers",
 ]
 
 # YAML agent registry — loads bundled + user agent definitions
@@ -89,7 +88,7 @@ depends_on = [
 path = "terok_agent.cli"
 depends_on = []
 
-# Package root — public API re-exports
+# Package root — public API re-exports + registry bootstrap
 [[modules]]
 path = "terok_agent"
 depends_on = [
@@ -99,4 +98,5 @@ depends_on = [
     "terok_agent.config_stack",
     "terok_agent.headless_providers",
     "terok_agent.instructions",
+    "terok_agent.registry",
 ]
