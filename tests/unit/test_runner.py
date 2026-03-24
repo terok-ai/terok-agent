@@ -84,14 +84,12 @@ class TestAgentRunner:
         # Should include OpenCode provider env vars
         assert any(k.startswith("TEROK_OC_") for k in env)
 
-    def test_run_headless_assembles_command(self, tmp_path: Path) -> None:
-        """Verify headless run composes the right pieces (mocked podman)."""
-        runner = AgentRunner(sandbox=_mock_sandbox())
+    def test_run_headless_delegates_to_sandbox_run(self, tmp_path: Path) -> None:
+        """Verify headless run delegates to sandbox.run() with correct RunSpec."""
+        sandbox = _mock_sandbox()
+        runner = AgentRunner(sandbox=sandbox)
 
-        with (
-            patch.object(runner, "_ensure_images", return_value="terok-l1-cli:test"),
-            patch("subprocess.run") as mock_run,
-        ):
+        with patch.object(runner, "_ensure_images", return_value="terok-l1-cli:test"):
             cname = runner.run_headless(
                 "claude",
                 str(tmp_path),
@@ -100,141 +98,118 @@ class TestAgentRunner:
             )
 
         assert cname.startswith("terok-agent-")
-        mock_run.assert_called_once()
-        cmd = mock_run.call_args[0][0]
-        assert cmd[0] == "podman"
-        assert "run" in cmd
-        assert any("/home/dev/.terok" in arg for arg in cmd)
+        sandbox.run.assert_called_once()
+        spec = sandbox.run.call_args[0][0]
+        assert spec.image == "terok-l1-cli:test"
+        assert any("/home/dev/.terok" in v for v in spec.volumes)
 
-    def test_restricted_mode_adds_no_new_privileges(self, tmp_path: Path) -> None:
-        runner = AgentRunner(sandbox=_mock_sandbox())
+    def test_restricted_mode_sets_unrestricted_false(self, tmp_path: Path) -> None:
+        """Restricted mode passes unrestricted=False in RunSpec."""
+        sandbox = _mock_sandbox()
+        runner = AgentRunner(sandbox=sandbox)
 
-        with (
-            patch.object(runner, "_ensure_images", return_value="terok-l1-cli:test"),
-            patch("subprocess.run") as mock_run,
-        ):
+        with patch.object(runner, "_ensure_images", return_value="terok-l1-cli:test"):
             runner.run_headless(
                 "claude", str(tmp_path), prompt="test", follow=False, unrestricted=False
             )
 
-        cmd = mock_run.call_args[0][0]
-        assert "--security-opt" in cmd
-        assert "no-new-privileges" in cmd
+        spec = sandbox.run.call_args[0][0]
+        assert spec.unrestricted is False
         # TEROK_UNRESTRICTED should NOT be in env
-        assert not any("TEROK_UNRESTRICTED" in arg for arg in cmd)
+        assert "TEROK_UNRESTRICTED" not in spec.env
 
     def test_unrestricted_mode_sets_env(self, tmp_path: Path) -> None:
-        runner = AgentRunner(sandbox=_mock_sandbox())
+        """Unrestricted spec includes TEROK_UNRESTRICTED=1."""
+        sandbox = _mock_sandbox()
+        runner = AgentRunner(sandbox=sandbox)
 
-        with (
-            patch.object(runner, "_ensure_images", return_value="terok-l1-cli:test"),
-            patch("subprocess.run") as mock_run,
-        ):
+        with patch.object(runner, "_ensure_images", return_value="terok-l1-cli:test"):
             runner.run_headless(
                 "claude", str(tmp_path), prompt="test", follow=False, unrestricted=True
             )
 
-        cmd = mock_run.call_args[0][0]
-        assert "no-new-privileges" not in " ".join(cmd)
-        assert any("TEROK_UNRESTRICTED=1" in arg for arg in cmd)
+        spec = sandbox.run.call_args[0][0]
+        assert spec.unrestricted is True
+        assert spec.env.get("TEROK_UNRESTRICTED") == "1"
 
-    def test_gpu_flag_passes_device_args(self, tmp_path: Path) -> None:
-        runner = AgentRunner(sandbox=_mock_sandbox())
+    def test_gpu_flag_sets_gpu_enabled(self, tmp_path: Path) -> None:
+        """GPU flag propagates to RunSpec.gpu_enabled."""
+        sandbox = _mock_sandbox()
+        runner = AgentRunner(sandbox=sandbox)
 
-        with (
-            patch.object(runner, "_ensure_images", return_value="terok-l1-cli:test"),
-            patch(
-                "terok_sandbox.runtime.gpu_run_args",
-                return_value=["--device", "nvidia.com/gpu=all"],
-            ),
-            patch("subprocess.run") as mock_run,
-        ):
+        with patch.object(runner, "_ensure_images", return_value="terok-l1-cli:test"):
             runner.run_headless("claude", str(tmp_path), prompt="test", follow=False, gpu=True)
 
-        cmd = mock_run.call_args[0][0]
-        assert "--device" in cmd
+        spec = sandbox.run.call_args[0][0]
+        assert spec.gpu_enabled is True
 
-    def test_bypass_shield_skips_pre_start(self, tmp_path: Path) -> None:
+    def test_bypass_shield_sets_flag(self, tmp_path: Path) -> None:
+        """Bypass shield flag propagates to RunSpec."""
+        sandbox = _mock_sandbox()
+        runner = AgentRunner(sandbox=sandbox)
+
+        with patch.object(runner, "_ensure_images", return_value="terok-l1-cli:test"):
+            runner.run_headless(
+                "claude", str(tmp_path), prompt="test", follow=False, bypass_shield=True
+            )
+
+        spec = sandbox.run.call_args[0][0]
+        assert spec.bypass_shield is True
+
+    def test_run_interactive_command(self, tmp_path: Path) -> None:
+        """Interactive mode includes init-ssh-and-repo.sh in command."""
+        sandbox = _mock_sandbox()
+        runner = AgentRunner(sandbox=sandbox)
+
+        with patch.object(runner, "_ensure_images", return_value="terok-l1-cli:test"):
+            runner.run_interactive("claude", str(tmp_path))
+
+        spec = sandbox.run.call_args[0][0]
+        cmd_str = " ".join(spec.command)
+        assert "init-ssh-and-repo.sh" in cmd_str
+        assert "__CLI_READY__" in cmd_str
+
+    def test_run_web_publishes_port(self, tmp_path: Path) -> None:
+        """Web mode includes port publishing in extra_args."""
+        sandbox = _mock_sandbox()
+        runner = AgentRunner(sandbox=sandbox)
+
+        with patch.object(runner, "_ensure_images", return_value="terok-l1-cli:test"):
+            runner.run_web(str(tmp_path), port=9999)
+
+        spec = sandbox.run.call_args[0][0]
+        assert "-p" in spec.extra_args
+        idx = list(spec.extra_args).index("-p")
+        assert "9999:8080" in spec.extra_args[idx + 1]
+
+    def test_run_web_auto_allocates_port(self, tmp_path: Path) -> None:
+        """Web mode auto-allocates a port when none given."""
         sandbox = _mock_sandbox()
         runner = AgentRunner(sandbox=sandbox)
 
         with (
             patch.object(runner, "_ensure_images", return_value="terok-l1-cli:test"),
-            patch("subprocess.run"),
-            patch("builtins.print"),
-        ):
-            runner.run_headless(
-                "claude", str(tmp_path), prompt="test", follow=False, bypass_shield=True
-            )
-
-        # pre_start_args should NOT have been called
-        sandbox.pre_start_args.assert_not_called()
-
-    def test_run_interactive_command(self, tmp_path: Path) -> None:
-        runner = AgentRunner(sandbox=_mock_sandbox())
-
-        with (
-            patch.object(runner, "_ensure_images", return_value="terok-l1-cli:test"),
-            patch("subprocess.run") as mock_run,
-        ):
-            runner.run_interactive("claude", str(tmp_path))
-
-        cmd = mock_run.call_args[0][0]
-        cmd_str = " ".join(cmd)
-        assert "init-ssh-and-repo.sh" in cmd_str
-        assert "__CLI_READY__" in cmd_str
-
-    def test_run_web_publishes_port(self, tmp_path: Path) -> None:
-        runner = AgentRunner(sandbox=_mock_sandbox())
-
-        with (
-            patch.object(runner, "_ensure_images", return_value="terok-l1-cli:test"),
-            patch("subprocess.run") as mock_run,
-        ):
-            runner.run_web(str(tmp_path), port=9999)
-
-        cmd = mock_run.call_args[0][0]
-        assert "-p" in cmd
-        idx = cmd.index("-p")
-        assert "9999:8080" in cmd[idx + 1]
-
-    def test_run_web_auto_allocates_port(self, tmp_path: Path) -> None:
-        runner = AgentRunner(sandbox=_mock_sandbox())
-
-        with (
-            patch.object(runner, "_ensure_images", return_value="terok-l1-cli:test"),
             patch("terok_sandbox.find_free_port", return_value=12345),
-            patch("subprocess.run") as mock_run,
         ):
             runner.run_web(str(tmp_path))  # no port= arg
 
-        cmd = mock_run.call_args[0][0]
-        assert "-p" in cmd
-        idx = cmd.index("-p")
-        assert "12345:8080" in cmd[idx + 1]
+        spec = sandbox.run.call_args[0][0]
+        assert "-p" in spec.extra_args
+        idx = list(spec.extra_args).index("-p")
+        assert "12345:8080" in spec.extra_args[idx + 1]
 
-    def test_launch_redacts_code_repo(self, tmp_path: Path) -> None:
-        runner = AgentRunner(sandbox=_mock_sandbox())
+    def test_hooks_passed_to_sandbox_run(self, tmp_path: Path) -> None:
+        """Lifecycle hooks are forwarded to sandbox.run()."""
+        from terok_sandbox import LifecycleHooks
 
-        with (
-            patch.object(runner, "_ensure_images", return_value="terok-l1-cli:test"),
-            patch("subprocess.run") as mock_run,
-            patch("builtins.print") as mock_print,
-        ):
-            runner.run_headless(
-                "claude",
-                "git@github.com:user/repo.git",
-                prompt="test",
-                gate=False,
-                follow=False,
-            )
+        sandbox = _mock_sandbox()
+        runner = AgentRunner(sandbox=sandbox)
+        hooks = LifecycleHooks(pre_start=lambda: None)
 
-        # The printed command should have CODE_REPO redacted
-        printed = mock_print.call_args[0][1]
-        assert "CODE_REPO=<redacted>" in printed
-        # But the actual podman command should have the real value
-        cmd = mock_run.call_args[0][0]
-        assert any("CODE_REPO=git@github.com:user/repo.git" in arg for arg in cmd)
+        with patch.object(runner, "_ensure_images", return_value="terok-l1-cli:test"):
+            runner.run_headless("claude", str(tmp_path), prompt="test", follow=False, hooks=hooks)
+
+        assert sandbox.run.call_args.kwargs["hooks"] is hooks
 
     def test_lazy_sandbox_init(self) -> None:
         runner = AgentRunner()
@@ -243,6 +218,22 @@ class TestAgentRunner:
             mock_cls.return_value = _mock_sandbox()
             s = runner.sandbox
             assert s is not None
+
+    def test_gpu_config_error_becomes_build_error(self, tmp_path: Path) -> None:
+        """GpuConfigError from sandbox.run() is wrapped as BuildError."""
+        from terok_sandbox import GpuConfigError
+
+        from terok_agent.build import BuildError
+
+        sandbox = _mock_sandbox()
+        sandbox.run.side_effect = GpuConfigError("CDI broken")
+        runner = AgentRunner(sandbox=sandbox)
+
+        with (
+            patch.object(runner, "_ensure_images", return_value="terok-l1-cli:test"),
+            pytest.raises(BuildError, match="CDI broken"),
+        ):
+            runner.run_headless("claude", str(tmp_path), prompt="test", follow=False)
 
 
 class TestGateIntegration:
@@ -274,7 +265,6 @@ class TestGateIntegration:
             patch.object(
                 runner, "_setup_gate", return_value="http://tok@host:9418/repo"
             ) as mock_gate,
-            patch("subprocess.run") as mock_run,
         ):
             runner.run_headless(
                 "claude",
@@ -288,9 +278,9 @@ class TestGateIntegration:
         mock_gate.assert_called_once()
         assert mock_gate.call_args[0][0] == "git@github.com:user/repo.git"
 
-        # Verify the gate URL ended up in the podman command as CODE_REPO
-        cmd = mock_run.call_args[0][0]
-        assert any("CODE_REPO=http://tok@host:9418/repo" in arg for arg in cmd)
+        # Verify the gate URL ended up in the RunSpec env as CODE_REPO
+        spec = sandbox.run.call_args[0][0]
+        assert spec.env.get("CODE_REPO") == "http://tok@host:9418/repo"
 
     def test_gate_false_skips_gate(self) -> None:
         sandbox = _mock_sandbox()
@@ -299,7 +289,6 @@ class TestGateIntegration:
         with (
             patch.object(runner, "_ensure_images", return_value="terok-l1-cli:test"),
             patch.object(runner, "_setup_gate") as mock_gate,
-            patch("subprocess.run") as mock_run,
         ):
             runner.run_headless(
                 "claude",
@@ -311,8 +300,8 @@ class TestGateIntegration:
 
         mock_gate.assert_not_called()
         # CODE_REPO should be the raw URL
-        cmd = mock_run.call_args[0][0]
-        assert any("git@github.com:user/repo.git" in arg for arg in cmd)
+        spec = sandbox.run.call_args[0][0]
+        assert spec.env.get("CODE_REPO") == "git@github.com:user/repo.git"
 
 
 class TestCommandRegistry:

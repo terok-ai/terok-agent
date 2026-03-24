@@ -18,7 +18,6 @@ Gate is on by default (safe-by-default egress control).
 from __future__ import annotations
 
 import shlex
-import subprocess
 import tempfile
 import uuid
 from pathlib import Path
@@ -27,7 +26,7 @@ from typing import TYPE_CHECKING
 from .build import BuildError, build_base_images
 
 if TYPE_CHECKING:
-    from terok_sandbox import Sandbox
+    from terok_sandbox import LifecycleHooks, Sandbox
 
     from .registry import AgentRegistry
 
@@ -225,68 +224,36 @@ class AgentRunner:
         unrestricted: bool = True,
         gpu: bool = False,
         bypass_shield: bool = False,
+        hooks: LifecycleHooks | None = None,
     ) -> str:
-        """Assemble and execute the podman run command. Returns container name.
+        """Delegate container launch to :meth:`Sandbox.run`. Returns container name.
 
-        Security flags:
-        - *unrestricted*: when False, adds ``--security-opt no-new-privileges``
-          to limit what the agent can do inside the container.
-        - *bypass_shield*: skip shield entirely, fall back to podman's default
-          networking.  Deliberately named to be loud — this disables the egress
-          firewall.
-        - *gpu*: pass GPU device args to podman (``--device nvidia.com/gpu=all``).
+        Builds a :class:`~terok_sandbox.RunSpec` from the parameters and
+        passes it to the sandbox executor.  All podman command assembly,
+        shield integration, GPU args, and error handling live in
+        :mod:`terok_sandbox` — this method is a thin mapping layer.
         """
-        from terok_sandbox import gpu_run_args
-
-        from terok_agent._util import podman_userns_args
+        from terok_sandbox import GpuConfigError, RunSpec
 
         cname = name or f"terok-agent-{task_id}"
 
-        cmd = ["podman", "run", "-d"]
-        cmd += podman_userns_args()
+        spec = RunSpec(
+            container_name=cname,
+            image=image,
+            env=env,
+            volumes=tuple(volumes),
+            command=tuple(command),
+            task_dir=task_dir,
+            gpu_enabled=gpu,
+            extra_args=tuple(extra_args or ()),
+            unrestricted=unrestricted,
+            bypass_shield=bypass_shield,
+        )
 
-        if not unrestricted:
-            cmd += ["--security-opt", "no-new-privileges"]
-
-        # Shield integration
-        if bypass_shield:
-            print(
-                "\n!! SHIELD BYPASSED — egress firewall DISABLED "
-                "(--bypass-shield-no-protection) !!\n"
-            )
-        else:
-            try:
-                shield_args = self.sandbox.pre_start_args(cname, task_dir)
-                cmd += shield_args
-            except (OSError, FileNotFoundError, SystemExit):
-                pass
-
-        cmd += gpu_run_args(enabled=gpu)
-
-        if extra_args:
-            cmd += extra_args
-
-        for vol in volumes:
-            cmd += ["-v", vol]
-        for k, v in env.items():
-            cmd += ["-e", f"{k}={v}"]
-
-        cmd += ["--name", cname, "-w", "/workspace", image]
-        cmd += command
-
-        # Redact env values that may contain gate tokens
-        _REDACT_PREFIXES = ("CODE_REPO=", "CLONE_FROM=")
-        display_cmd = [
-            arg.split("=", 1)[0] + "=<redacted>"
-            if any(arg.startswith(p) for p in _REDACT_PREFIXES)
-            else arg
-            for arg in cmd
-        ]
-        print("$", shlex.join(display_cmd))
         try:
-            subprocess.run(cmd, check=True)
-        except subprocess.CalledProcessError as e:
-            raise BuildError(f"Container launch failed: {e}") from e
+            self.sandbox.run(spec, hooks=hooks)
+        except GpuConfigError as exc:
+            raise BuildError(str(exc)) from exc
 
         return cname
 
@@ -306,6 +273,7 @@ class AgentRunner:
         unrestricted: bool = True,
         gpu: bool = False,
         bypass_shield: bool = False,
+        hooks: LifecycleHooks | None = None,
     ) -> str:
         """Launch a headless agent run. Returns container name.
 
@@ -328,6 +296,7 @@ class AgentRunner:
             unrestricted=unrestricted,
             gpu=gpu,
             bypass_shield=bypass_shield,
+            hooks=hooks,
         )
 
     def run_interactive(
@@ -341,6 +310,7 @@ class AgentRunner:
         unrestricted: bool = True,
         gpu: bool = False,
         bypass_shield: bool = False,
+        hooks: LifecycleHooks | None = None,
     ) -> str:
         """Launch an interactive container. Returns container name.
 
@@ -356,6 +326,7 @@ class AgentRunner:
             unrestricted=unrestricted,
             gpu=gpu,
             bypass_shield=bypass_shield,
+            hooks=hooks,
         )
 
     def run_web(
@@ -370,6 +341,7 @@ class AgentRunner:
         unrestricted: bool = True,
         gpu: bool = False,
         bypass_shield: bool = False,
+        hooks: LifecycleHooks | None = None,
     ) -> str:
         """Launch a toad web container. Returns container name.
 
@@ -391,6 +363,7 @@ class AgentRunner:
             unrestricted=unrestricted,
             gpu=gpu,
             bypass_shield=bypass_shield,
+            hooks=hooks,
         )
 
     def _run(
@@ -412,6 +385,7 @@ class AgentRunner:
         unrestricted: bool = True,
         gpu: bool = False,
         bypass_shield: bool = False,
+        hooks: LifecycleHooks | None = None,
     ) -> str:
         """Unified launch flow for all three modes."""
         from .headless_providers import build_headless_command
@@ -502,6 +476,7 @@ class AgentRunner:
             unrestricted=unrestricted,
             gpu=gpu,
             bypass_shield=bypass_shield,
+            hooks=hooks,
         )
 
         # Follow output if requested
