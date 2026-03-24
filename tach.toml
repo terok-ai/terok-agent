@@ -86,7 +86,9 @@ depends_on = [
 # CLI entry point
 [[modules]]
 path = "terok_agent.cli"
-depends_on = []
+depends_on = [
+    "terok_agent.registry",
+]
 
 # Package root — public API re-exports + registry bootstrap
 [[modules]]
