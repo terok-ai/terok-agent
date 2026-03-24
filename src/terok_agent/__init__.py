@@ -54,6 +54,9 @@ from .agents import AgentConfigSpec, parse_md_agent, prepare_agent_config_dir
 # -- Auth ----------------------------------------------------------------------
 from .auth import AUTH_PROVIDERS, AuthProvider, authenticate
 
+# -- Build resource staging ----------------------------------------------------
+from .build import stage_scripts, stage_tmux_config, stage_toad_agents
+
 # -- Config stack --------------------------------------------------------------
 from .config_stack import ConfigScope, ConfigStack
 
@@ -121,4 +124,8 @@ __all__ = [
     "ConfigScope",
     "ConfigStack",
     "resolve_provider_value",
+    # Build resource staging
+    "stage_scripts",
+    "stage_toad_agents",
+    "stage_tmux_config",
 ]

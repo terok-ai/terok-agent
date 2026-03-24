@@ -12,6 +12,8 @@ path = [
   "**/*.txt",
   "**/*.css",
   "**/*.template",
+  "**/*.conf",
+  "**/*.mjs",
   ".gitignore",
   "MANIFEST.in",
   "Makefile",

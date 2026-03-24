@@ -83,6 +83,11 @@ depends_on = [
     "terok_agent.headless_providers",
 ]
 
+# Build resource staging — standalone, reads from resources only
+[[modules]]
+path = "terok_agent.build"
+depends_on = []
+
 # CLI entry point
 [[modules]]
 path = "terok_agent.cli"
@@ -97,6 +102,7 @@ depends_on = [
     "terok_agent.agent_config",
     "terok_agent.agents",
     "terok_agent.auth",
+    "terok_agent.build",
     "terok_agent.config_stack",
     "terok_agent.headless_providers",
     "terok_agent.instructions",
