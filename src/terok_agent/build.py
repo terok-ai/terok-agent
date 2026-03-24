@@ -321,11 +321,12 @@ def build_base_images(
     try:
         prepare_build_context(context)
 
+        # Single timestamp for both render and build-arg consistency
+        cache_bust = str(int(time.time()))
+
         # Render and write Dockerfiles into the build context
         (context / "L0.Dockerfile").write_text(render_l0(base_image))
-        (context / "L1.cli.Dockerfile").write_text(
-            render_l1(l0_tag, cache_bust=str(int(time.time())))
-        )
+        (context / "L1.cli.Dockerfile").write_text(render_l1(l0_tag, cache_bust=cache_bust))
 
         ctx = str(context)
 
@@ -343,7 +344,7 @@ def build_base_images(
         # Build L1 — agent CLI layer (all agent installs, shell env, ACP wrappers)
         cmd_l1 = ["podman", "build", "-f", str(context / "L1.cli.Dockerfile")]
         cmd_l1 += ["--build-arg", f"BASE_IMAGE={l0_tag}"]
-        cmd_l1 += ["--build-arg", f"AGENT_CACHE_BUST={int(time.time())}"]
+        cmd_l1 += ["--build-arg", f"AGENT_CACHE_BUST={cache_bust}"]
         cmd_l1 += ["-t", l1_tag]
         if full_rebuild:
             cmd_l1.append("--no-cache")

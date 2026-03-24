@@ -14,6 +14,7 @@ from terok_agent.build import (
     ImageSet,
     _base_tag,
     _normalize_base_image,
+    build_base_images,
     l0_image_tag,
     l1_image_tag,
     prepare_build_context,
@@ -93,17 +94,15 @@ class TestBuildDirGuard:
     """Verify build_dir safety checks."""
 
     def test_rejects_nonempty_dir(self, tmp_path: Path) -> None:
-        (tmp_path / "existing-file.txt").write_text("data")
         from unittest.mock import patch
 
+        (tmp_path / "existing-file.txt").write_text("data")
         with (
             patch("terok_agent.build._check_podman"),
             patch("terok_agent.build._image_exists", return_value=False),
+            pytest.raises(ValueError, match="must be empty"),
         ):
-            with pytest.raises(ValueError, match="must be empty"):
-                from terok_agent.build import build_base_images
-
-                build_base_images(build_dir=tmp_path)
+            build_base_images(build_dir=tmp_path)
 
 
 # ---------------------------------------------------------------------------
