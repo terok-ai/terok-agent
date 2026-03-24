@@ -36,6 +36,7 @@ from __future__ import annotations
 
 import hashlib
 import re
+import shlex
 import shutil
 import subprocess
 import time
@@ -350,7 +351,7 @@ def build_base_images(
             cmd_l0 += ["--no-cache", "--pull=always"]
         cmd_l0.append(ctx)
 
-        print("$", " ".join(cmd_l0))
+        print("$", shlex.join(cmd_l0))
         subprocess.run(cmd_l0, check=True)
 
         # Build L1 — agent CLI layer (all agent installs, shell env, ACP wrappers)
@@ -362,10 +363,10 @@ def build_base_images(
             cmd_l1.append("--no-cache")
         cmd_l1.append(ctx)
 
-        print("$", " ".join(cmd_l1))
+        print("$", shlex.join(cmd_l1))
         subprocess.run(cmd_l1, check=True)
 
-    except subprocess.CalledProcessError as e:
+    except (OSError, subprocess.CalledProcessError) as e:
         raise BuildError(f"Image build failed: {e}") from e
     finally:
         if own_tmp:

@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -103,6 +104,142 @@ class TestBuildDirGuard:
         file_path.write_text("data")
         with pytest.raises(ValueError, match="not a directory"):
             build_base_images(build_dir=file_path)
+
+
+# ---------------------------------------------------------------------------
+# build_base_images (mocked podman)
+# ---------------------------------------------------------------------------
+
+
+class TestBuildBaseImages:
+    """Verify build_base_images orchestration with mocked podman."""
+
+    def test_skips_when_images_exist(self) -> None:
+        from unittest.mock import patch
+
+        with (
+            patch("terok_agent.build._check_podman"),
+            patch("terok_agent.build._image_exists", return_value=True),
+        ):
+            result = build_base_images()
+        assert result.l0.startswith("terok-l0:")
+        assert result.l1.startswith("terok-l1-cli:")
+
+    def test_builds_when_images_missing(self, tmp_path: Path) -> None:
+        from unittest.mock import patch
+
+        build_dir = tmp_path / "ctx"
+        with (
+            patch("terok_agent.build._check_podman"),
+            patch("terok_agent.build._image_exists", return_value=False),
+            patch("subprocess.run") as mock_run,
+        ):
+            result = build_base_images(build_dir=build_dir)
+
+        # Two podman build calls (L0 + L1)
+        assert mock_run.call_count == 2
+        l0_cmd = mock_run.call_args_list[0][0][0]
+        l1_cmd = mock_run.call_args_list[1][0][0]
+        assert l0_cmd[0] == "podman"
+        assert "-t" in l0_cmd
+        assert result.l0 in l0_cmd
+        assert l1_cmd[0] == "podman"
+        assert result.l1 in l1_cmd
+
+    def test_rebuild_forces_build(self, tmp_path: Path) -> None:
+        from unittest.mock import patch
+
+        build_dir = tmp_path / "ctx"
+        with (
+            patch("terok_agent.build._check_podman"),
+            patch("terok_agent.build._image_exists", return_value=True),
+            patch("subprocess.run") as mock_run,
+        ):
+            build_base_images(rebuild=True, build_dir=build_dir)
+
+        # Should build even though images exist
+        assert mock_run.call_count == 2
+
+    def test_full_rebuild_passes_no_cache(self, tmp_path: Path) -> None:
+        from unittest.mock import patch
+
+        build_dir = tmp_path / "ctx"
+        with (
+            patch("terok_agent.build._check_podman"),
+            patch("terok_agent.build._image_exists", return_value=False),
+            patch("subprocess.run") as mock_run,
+        ):
+            build_base_images(full_rebuild=True, build_dir=build_dir)
+
+        l0_cmd = mock_run.call_args_list[0][0][0]
+        assert "--no-cache" in l0_cmd
+        assert "--pull=always" in l0_cmd
+
+    def test_build_failure_raises_build_error(self, tmp_path: Path) -> None:
+        from unittest.mock import patch
+
+        build_dir = tmp_path / "ctx"
+        with (
+            patch("terok_agent.build._check_podman"),
+            patch("terok_agent.build._image_exists", return_value=False),
+            patch(
+                "subprocess.run",
+                side_effect=subprocess.CalledProcessError(1, "podman"),
+            ),
+            pytest.raises(BuildError, match="build failed"),
+        ):
+            build_base_images(build_dir=build_dir)
+
+    def test_os_error_raises_build_error(self, tmp_path: Path) -> None:
+        from unittest.mock import patch
+
+        build_dir = tmp_path / "ctx"
+        with (
+            patch("terok_agent.build._check_podman"),
+            patch("terok_agent.build._image_exists", return_value=False),
+            patch("terok_agent.build.prepare_build_context", side_effect=OSError("disk full")),
+            pytest.raises(BuildError, match="disk full"),
+        ):
+            build_base_images(build_dir=build_dir)
+
+    def test_missing_podman_raises_build_error(self) -> None:
+        from unittest.mock import patch
+
+        with (
+            patch("shutil.which", return_value=None),
+            pytest.raises(BuildError, match="podman not found"),
+        ):
+            build_base_images()
+
+    def test_custom_base_image(self, tmp_path: Path) -> None:
+        from unittest.mock import patch
+
+        build_dir = tmp_path / "ctx"
+        with (
+            patch("terok_agent.build._check_podman"),
+            patch("terok_agent.build._image_exists", return_value=False),
+            patch("subprocess.run") as mock_run,
+        ):
+            result = build_base_images("nvidia/cuda:12.4", build_dir=build_dir)
+
+        assert "nvidia-cuda-12.4" in result.l0
+        l0_cmd = mock_run.call_args_list[0][0][0]
+        assert any("nvidia/cuda:12.4" in arg for arg in l0_cmd)
+
+    def test_build_context_has_dockerfiles(self, tmp_path: Path) -> None:
+        from unittest.mock import patch
+
+        build_dir = tmp_path / "ctx"
+        with (
+            patch("terok_agent.build._check_podman"),
+            patch("terok_agent.build._image_exists", return_value=False),
+            patch("subprocess.run"),
+        ):
+            build_base_images(build_dir=build_dir)
+
+        assert (build_dir / "L0.Dockerfile").is_file()
+        assert (build_dir / "L1.cli.Dockerfile").is_file()
+        assert (build_dir / "scripts" / "init-ssh-and-repo.sh").is_file()
 
 
 # ---------------------------------------------------------------------------
