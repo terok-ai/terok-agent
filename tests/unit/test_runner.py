@@ -106,6 +106,70 @@ class TestAgentRunner:
         assert "run" in cmd
         assert any("/home/dev/.terok" in arg for arg in cmd)
 
+    def test_restricted_mode_adds_no_new_privileges(self, tmp_path: Path) -> None:
+        runner = AgentRunner(sandbox=_mock_sandbox())
+
+        with (
+            patch.object(runner, "_ensure_images", return_value="terok-l1-cli:test"),
+            patch("subprocess.run") as mock_run,
+        ):
+            runner.run_headless(
+                "claude", str(tmp_path), prompt="test", follow=False, unrestricted=False
+            )
+
+        cmd = mock_run.call_args[0][0]
+        assert "--security-opt" in cmd
+        assert "no-new-privileges" in cmd
+        # TEROK_UNRESTRICTED should NOT be in env
+        assert not any("TEROK_UNRESTRICTED" in arg for arg in cmd)
+
+    def test_unrestricted_mode_sets_env(self, tmp_path: Path) -> None:
+        runner = AgentRunner(sandbox=_mock_sandbox())
+
+        with (
+            patch.object(runner, "_ensure_images", return_value="terok-l1-cli:test"),
+            patch("subprocess.run") as mock_run,
+        ):
+            runner.run_headless(
+                "claude", str(tmp_path), prompt="test", follow=False, unrestricted=True
+            )
+
+        cmd = mock_run.call_args[0][0]
+        assert "no-new-privileges" not in " ".join(cmd)
+        assert any("TEROK_UNRESTRICTED=1" in arg for arg in cmd)
+
+    def test_gpu_flag_passes_device_args(self, tmp_path: Path) -> None:
+        runner = AgentRunner(sandbox=_mock_sandbox())
+
+        with (
+            patch.object(runner, "_ensure_images", return_value="terok-l1-cli:test"),
+            patch(
+                "terok_sandbox.runtime.gpu_run_args",
+                return_value=["--device", "nvidia.com/gpu=all"],
+            ),
+            patch("subprocess.run") as mock_run,
+        ):
+            runner.run_headless("claude", str(tmp_path), prompt="test", follow=False, gpu=True)
+
+        cmd = mock_run.call_args[0][0]
+        assert "--device" in cmd
+
+    def test_bypass_shield_skips_pre_start(self, tmp_path: Path) -> None:
+        sandbox = _mock_sandbox()
+        runner = AgentRunner(sandbox=sandbox)
+
+        with (
+            patch.object(runner, "_ensure_images", return_value="terok-l1-cli:test"),
+            patch("subprocess.run"),
+            patch("builtins.print"),
+        ):
+            runner.run_headless(
+                "claude", str(tmp_path), prompt="test", follow=False, bypass_shield=True
+            )
+
+        # pre_start_args should NOT have been called
+        sandbox.pre_start_args.assert_not_called()
+
     def test_run_interactive_command(self, tmp_path: Path) -> None:
         runner = AgentRunner(sandbox=_mock_sandbox())
 
