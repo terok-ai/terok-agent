@@ -338,11 +338,19 @@ class AgentRunner:
             env["GIT_BRANCH"] = branch
 
         # Repo access: local bind-mount or git clone
-        # TODO: when gate=True and code_repo is set, use sandbox gate server
-        # to mirror the repo and construct an HTTP gate URL instead of passing
-        # code_repo directly.  This requires: sandbox.ensure_gate(),
-        # GitGate.sync(), sandbox.create_token(), sandbox.gate_url().
-        # For now, code_repo is passed directly regardless of the gate flag.
+        # Gate integration for standalone terok-agent is not yet implemented.
+        # When called from terok, the gate flow runs in terok's environment.py
+        # (ensure_server_reachable, GitGate.sync, create_token, gate_url)
+        # which is independent of AgentRunner.
+        if gate and code_repo:
+            import warnings
+
+            warnings.warn(
+                "Gate mode is not yet implemented in standalone terok-agent. "
+                "Running with direct network access.",
+                stacklevel=2,
+            )
+
         volumes: list[str] = []
         if local_path:
             volumes.append(f"{local_path}:/workspace:Z")
