@@ -94,15 +94,15 @@ class TestBuildDirGuard:
     """Verify build_dir safety checks."""
 
     def test_rejects_nonempty_dir(self, tmp_path: Path) -> None:
-        from unittest.mock import patch
-
         (tmp_path / "existing-file.txt").write_text("data")
-        with (
-            patch("terok_agent.build._check_podman"),
-            patch("terok_agent.build._image_exists", return_value=False),
-            pytest.raises(ValueError, match="must be empty"),
-        ):
+        with pytest.raises(ValueError, match="must be empty"):
             build_base_images(build_dir=tmp_path)
+
+    def test_rejects_file_as_build_dir(self, tmp_path: Path) -> None:
+        file_path = tmp_path / "not-a-dir"
+        file_path.write_text("data")
+        with pytest.raises(ValueError, match="not a directory"):
+            build_base_images(build_dir=file_path)
 
 
 # ---------------------------------------------------------------------------
@@ -127,8 +127,18 @@ class TestTemplateRendering:
         assert "container-tmux.conf" in content
 
     def test_l0_contains_base_image_arg(self) -> None:
-        content = render_l0()
+        # Templates use Dockerfile ARG/FROM ${VAR} — Jinja2 is a pass-through
+        # for now. Verify the ARG directive and default value are present.
+        content = render_l0("busybox:1.36")
         assert "ARG BASE_IMAGE=" in content
+        # The default in the template is ubuntu:24.04; the render arg becomes
+        # a --build-arg at podman build time, not a template substitution.
+        assert "FROM ${BASE_IMAGE}" in content
+
+    def test_l0_renders_with_custom_base(self) -> None:
+        # Should not crash with any base image string
+        content = render_l0("nvidia/cuda:12.4.1-devel-ubuntu24.04")
+        assert "FROM" in content
 
     def test_l1_is_valid_dockerfile(self) -> None:
         content = render_l1("terok-l0:test")
@@ -143,6 +153,10 @@ class TestTemplateRendering:
     def test_l1_contains_cache_bust_arg(self) -> None:
         content = render_l1("terok-l0:test")
         assert "ARG AGENT_CACHE_BUST=" in content
+
+    def test_l1_renders_with_different_base(self) -> None:
+        content = render_l1("terok-l0:nvidia-cuda-12.4")
+        assert "FROM" in content
 
 
 # ---------------------------------------------------------------------------

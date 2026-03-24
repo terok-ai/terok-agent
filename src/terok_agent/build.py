@@ -4,15 +4,20 @@
 """Container image building and build-context staging.
 
 Owns the L0 (base dev) and L1 (agent CLI) Dockerfile templates, resource
-staging, image naming, and ``podman build`` invocation.  terok adds L2
-(project customisation) on top.
+staging, image naming, and ``podman build`` invocation.
 
 **Image layer architecture**::
 
     L0  (base)   — Ubuntu + dev tools + init script + dev user
     L1  (agent)  — All AI agent CLIs, shell environment, ACP wrappers
+                   L1 is self-sufficient for standalone use — all user
+                   config (repo URL, SSH, branch, gate) is runtime.
     ─── boundary: above owned by terok-agent, below by terok ───
-    L2  (project)— Project env vars, user Dockerfile snippet
+    L2  (project)— Optional: user Dockerfile snippet (custom packages)
+                   Only built when project has docker snippet config.
+
+``terok-agent run claude .`` launches directly on the L1 image — no L2
+build needed.  terok adds L2 only for project-specific image customisation.
 
 Usage as a library::
 
@@ -45,6 +50,9 @@ from pathlib import Path
 DEFAULT_BASE_IMAGE = "ubuntu:24.04"
 """Default base OS image when none is specified."""
 
+_DEFAULT_TAG = "ubuntu-24.04"
+"""Pre-sanitized tag fragment for the default base image."""
+
 
 # ---------------------------------------------------------------------------
 # Exceptions
@@ -76,7 +84,7 @@ def _base_tag(base_image: str) -> str:
     dashes, lowercases, and truncates with a SHA1 suffix if too long.
     """
     raw = _normalize_base_image(base_image)
-    tag = re.sub(r"[^A-Za-z0-9_.-]+", "-", raw).strip("-.").lower() or DEFAULT_BASE_IMAGE
+    tag = re.sub(r"[^A-Za-z0-9_.-]+", "-", raw).strip("-.").lower() or _DEFAULT_TAG
     if len(tag) > 120:
         digest = hashlib.sha1(raw.encode("utf-8"), usedforsecurity=False).hexdigest()[:8]
         tag = f"{tag[:111]}-{digest}"
@@ -298,6 +306,13 @@ def build_base_images(
         BuildError: If podman is missing or a build step fails.
         ValueError: If *build_dir* exists and is non-empty.
     """
+    # Validate arguments before any side effects (podman probe, temp dirs)
+    if build_dir is not None:
+        if build_dir.is_file():
+            raise ValueError(f"build_dir is a file, not a directory: {build_dir}")
+        if build_dir.exists() and any(build_dir.iterdir()):
+            raise ValueError(f"build_dir must be empty or absent: {build_dir}")
+
     _check_podman()
 
     base_image = _normalize_base_image(base_image)
@@ -314,9 +329,6 @@ def build_base_images(
 
     own_tmp = build_dir is None
     context = build_dir or Path(tempfile.mkdtemp(prefix="terok-agent-build-"))
-
-    if build_dir is not None and context.exists() and any(context.iterdir()):
-        raise ValueError(f"build_dir must be empty or absent: {context}")
 
     try:
         prepare_build_context(context)
