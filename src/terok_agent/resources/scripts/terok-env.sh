@@ -14,8 +14,8 @@
 # circuiting — if a snapshot set the env var but lost the functions,
 # re-sourcing repairs the shell.
 #
-# This guard is safe for per-task wrappers (terok-agent.sh, sourced at the
-# bottom of this file).  Wrappers are bind-mounted at container startup
+# This guard is safe for per-task wrappers (terok-env-wrappers.sh, sourced
+# at the bottom of this file).  Wrappers are bind-mounted at container startup
 # before any shell runs, so if _terok_apply_git_identity exists, wrappers
 # were already sourced in the same pass.  The [ -r ... ] guard at the
 # bottom handles the case where the mount is absent (standalone mode).
@@ -70,7 +70,7 @@ glab() {
 
 # ── Per-project agent wrappers ────────────────────────────────────────────────
 
-# Source per-task agent wrappers (mounted at /home/dev/.terok/terok-agent.sh).
-# Defines wrapper functions for all agent CLIs: claude(), codex(), vibe(), etc.
+# Source per-task agent wrappers via the L1 symlink to the bind-mounted
+# terok-agent.sh.  Defines wrapper functions: claude(), codex(), vibe(), etc.
 [ -r /usr/local/share/terok/terok-env-wrappers.sh ] && \
     . /usr/local/share/terok/terok-env-wrappers.sh

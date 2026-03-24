@@ -71,7 +71,7 @@ def fetch_models(api_key: str) -> list[str]:
 
         if isinstance(data.get("data"), list):
             for model in data["data"]:
-                if isinstance(model.get("id"), str):
+                if isinstance(model, dict) and isinstance(model.get("id"), str):
                     models.append(model["id"])
 
         return sorted(models)
@@ -114,9 +114,6 @@ def write_cache(cache_path: Path, models: list[str]) -> None:
 
         with open(cache_path, "w", encoding="utf-8") as f:
             f.write(content)
-
-        # Update file timestamp
-        cache_path.touch()
 
     except Exception as e:
         print(f"Error writing cache file: {e}", file=sys.stderr)
