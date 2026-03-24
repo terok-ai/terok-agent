@@ -9,6 +9,10 @@
 
 set -e
 
+SOCAT_PID=""
+cleanup() { [ -n "$SOCAT_PID" ] && kill "$SOCAT_PID" 2>/dev/null || true; }
+trap cleanup EXIT
+
 echo '>> Setting up port forwarding for codex auth (port 1455)'
 
 # Install required packages if not present
@@ -37,13 +41,6 @@ socat -v TCP-LISTEN:1455,bind=$CIP,fork,reuseaddr TCP:127.0.0.1:1455 &
 SOCAT_PID=$!
 echo ">> socat running (PID: $SOCAT_PID)"
 
-# Run codex login
+# Run codex login — trap EXIT handles socat cleanup on success or failure
 echo '>> Starting codex login...'
 codex login
-EXIT_CODE=$?
-
-# Clean up socat
-echo '>> Stopping socat...'
-kill $SOCAT_PID 2>/dev/null || true
-
-exit $EXIT_CODE

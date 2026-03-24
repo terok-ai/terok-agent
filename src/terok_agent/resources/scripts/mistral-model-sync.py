@@ -216,7 +216,7 @@ def parse_args() -> dict[str, Any]:
     elif args.min_age_hours is not None:
         min_age_seconds = args.min_age_hours * 3600
 
-    return {"min_age_seconds": min_age_seconds, "acknowledge": args.ack or args.acknowledge}
+    return {"min_age_seconds": min_age_seconds, "acknowledge": args.ack}
 
 
 def main() -> int:

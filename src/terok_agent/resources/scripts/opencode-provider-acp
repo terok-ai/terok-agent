@@ -23,7 +23,7 @@ _AGENT_EMAIL="noreply@${PROVIDER}.localhost"
 
 # Read config dir from host-injected env var if available, else use convention.
 _env_var="TEROK_OC_${PROVIDER^^}_CONFIG_DIR"
-if [[ -n "${!_env_var}" ]]; then
+if [[ -n "${!_env_var:-}" ]]; then
     CONFIG_DIR="${!_env_var}"
 else
     CONFIG_DIR=".${PROVIDER}"
