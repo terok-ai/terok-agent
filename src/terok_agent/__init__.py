@@ -80,6 +80,8 @@ from .instructions import bundled_default_instructions, resolve_instructions
 
 def _bootstrap_registry() -> None:
     """Populate module-level provider dicts from the YAML registry."""
+    global PROVIDER_NAMES  # noqa: PLW0603 — tuple requires rebind
+
     import terok_agent.headless_providers as _hp
 
     from .registry import get_registry
@@ -87,7 +89,7 @@ def _bootstrap_registry() -> None:
     reg = get_registry()
     HEADLESS_PROVIDERS.update(reg.providers)
     AUTH_PROVIDERS.update(reg.auth_providers)
-    _hp.PROVIDER_NAMES = reg.agent_names
+    PROVIDER_NAMES = _hp.PROVIDER_NAMES = reg.agent_names
 
 
 _bootstrap_registry()
