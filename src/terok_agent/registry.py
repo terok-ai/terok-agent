@@ -222,6 +222,20 @@ def _derive_opencode_auth(name: str, data: dict) -> AuthProvider | None:
 
 
 @dataclass(frozen=True)
+class MountDef:
+    """A shared directory mount derived from the agent registry."""
+
+    host_dir: str
+    """Directory name under ``envs_base_dir`` (e.g. ``"_codex-config"``)."""
+
+    container_path: str
+    """Mount point inside the container (e.g. ``"/home/dev/.codex"``)."""
+
+    label: str
+    """Human-readable label (e.g. ``"Codex config"``)."""
+
+
+@dataclass(frozen=True)
 class AgentRegistry:
     """Loaded registry of agents and tools from YAML definitions.
 
@@ -230,6 +244,7 @@ class AgentRegistry:
 
     _providers: dict[str, HeadlessProvider] = field(default_factory=dict)
     _auth_providers: dict[str, AuthProvider] = field(default_factory=dict)
+    _mounts: tuple[MountDef, ...] = ()
     _agent_names: tuple[str, ...] = ()
     _all_names: tuple[str, ...] = ()
 
@@ -252,6 +267,15 @@ class AgentRegistry:
     def all_names(self) -> tuple[str, ...]:
         """Names of all entries (agents + tools)."""
         return self._all_names
+
+    @property
+    def mounts(self) -> tuple[MountDef, ...]:
+        """All shared directory mounts (auth dirs + explicit ``mounts:`` sections).
+
+        Deduplicated by ``host_dir`` — if auth and mounts define the same
+        directory, only one entry is returned.
+        """
+        return self._mounts
 
     def get_provider(
         self, name: str | None, *, default_agent: str | None = None
@@ -322,13 +346,17 @@ def load_registry() -> AgentRegistry:
     agent_names: list[str] = []
     all_names: list[str] = []
 
+    # Collect mounts from all entries — deduplicate by host_dir
+    seen_mounts: dict[str, MountDef] = {}
+
     for name, data in sorted(raw.items()):
         kind = data.get("kind", "native")
-        all_names.append(name)
+        if kind != "runtime":
+            all_names.append(name)
 
         # Agent kinds (native, opencode, bridge) get a HeadlessProvider;
-        # tools only contribute auth.
-        if kind != "tool":
+        # tools and runtime entries only contribute auth/mounts.
+        if kind not in ("tool", "runtime"):
             agent_names.append(name)
             providers[name] = _to_headless_provider(name, data)
 
@@ -336,15 +364,38 @@ def load_registry() -> AgentRegistry:
         auth_prov = _to_auth_provider(name, data)
         if auth_prov is not None:
             auth_providers[name] = auth_prov
-        elif kind != "tool":
-            # Auto-derive from opencode config if present
+            # Auth providers also contribute a mount
+            if auth_prov.host_dir_name not in seen_mounts:
+                seen_mounts[auth_prov.host_dir_name] = MountDef(
+                    host_dir=auth_prov.host_dir_name,
+                    container_path=auth_prov.container_mount,
+                    label=f"{auth_prov.label} config",
+                )
+        elif kind not in ("tool", "runtime"):
             oc_auth = _derive_opencode_auth(name, data)
             if oc_auth is not None:
                 auth_providers[name] = oc_auth
+                if oc_auth.host_dir_name not in seen_mounts:
+                    seen_mounts[oc_auth.host_dir_name] = MountDef(
+                        host_dir=oc_auth.host_dir_name,
+                        container_path=oc_auth.container_mount,
+                        label=f"{oc_auth.label} config",
+                    )
+
+        # Explicit mounts section
+        for m in data.get("mounts", ()):
+            hd = m["host_dir"]
+            if hd not in seen_mounts:
+                seen_mounts[hd] = MountDef(
+                    host_dir=hd,
+                    container_path=m["container_path"],
+                    label=m.get("label", name),
+                )
 
     return AgentRegistry(
         _providers=providers,
         _auth_providers=auth_providers,
+        _mounts=tuple(seen_mounts.values()),
         _agent_names=tuple(agent_names),
         _all_names=tuple(all_names),
     )

@@ -48,18 +48,19 @@ class TestLoadBundledAgents:
             "opencode",
             "gh",
             "glab",
+            "toad",
         }
         assert set(agents.keys()) == expected
 
     def test_each_agent_has_kind(self) -> None:
-        valid_kinds = {"native", "opencode", "bridge", "tool"}
+        valid_kinds = {"native", "opencode", "bridge", "tool", "runtime"}
         for name, data in _load_bundled_agents().items():
             assert "kind" in data, f"{name}.yaml missing 'kind' field"
             assert data["kind"] in valid_kinds, f"{name}.yaml has invalid kind={data['kind']!r}"
 
     def test_agents_have_required_sections(self) -> None:
         for name, data in _load_bundled_agents().items():
-            if data["kind"] == "tool":
+            if data["kind"] in ("tool", "runtime"):
                 continue
             assert "label" in data, f"{name}: missing label"
             assert "binary" in data, f"{name}: missing binary"
@@ -223,6 +224,25 @@ class TestLoadRegistry:
         # blablador has no explicit auth section but has opencode config → auto-derived
         assert "blablador" in reg.auth_providers
         assert "kisski" in reg.auth_providers
+
+    def test_mounts_include_auth_dirs(self) -> None:
+        reg = load_registry()
+        mount_dirs = {m.host_dir for m in reg.mounts}
+        assert "_claude-config" in mount_dirs
+        assert "_codex-config" in mount_dirs
+        assert "_gh-config" in mount_dirs
+
+    def test_mounts_include_extra_dirs(self) -> None:
+        reg = load_registry()
+        mount_dirs = {m.host_dir for m in reg.mounts}
+        assert "_opencode-config" in mount_dirs
+        assert "_opencode-data" in mount_dirs
+        assert "_toad-config" in mount_dirs
+
+    def test_mounts_deduplicated(self) -> None:
+        reg = load_registry()
+        host_dirs = [m.host_dir for m in reg.mounts]
+        assert len(host_dirs) == len(set(host_dirs))
 
     def test_get_provider_resolves(self) -> None:
         reg = load_registry()

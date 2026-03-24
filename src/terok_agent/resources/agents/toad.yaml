@@ -1,0 +1,13 @@
+# SPDX-FileCopyrightText: 2026 Jiri Vyskocil
+# SPDX-License-Identifier: Apache-2.0
+
+# Toad multi-agent TUI — shared config dir for theme and launcher state.
+# Not an agent or tool — a runtime component installed in L1.
+kind: runtime
+label: Toad
+binary: toad
+
+mounts:
+  - host_dir: _toad-config
+    container_path: /home/dev/.config/toad
+    label: Toad config
