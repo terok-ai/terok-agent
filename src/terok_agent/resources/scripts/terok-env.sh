@@ -13,6 +13,12 @@
 # We therefore check that key functions actually exist before short-
 # circuiting — if a snapshot set the env var but lost the functions,
 # re-sourcing repairs the shell.
+#
+# This guard is safe for per-task wrappers (terok-agent.sh, sourced at the
+# bottom of this file).  Wrappers are bind-mounted at container startup
+# before any shell runs, so if _terok_apply_git_identity exists, wrappers
+# were already sourced in the same pass.  The [ -r ... ] guard at the
+# bottom handles the case where the mount is absent (standalone mode).
 _terok_env_ready() {
   declare -F _terok_apply_git_identity >/dev/null 2>&1
 }
