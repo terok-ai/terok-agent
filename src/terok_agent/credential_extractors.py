@@ -49,10 +49,20 @@ def extract_claude_oauth(base_dir: Path) -> dict:
     authenticated with an API key instead, ``config.json`` contains
     ``{"api_key": "..."}``.  Both paths are checked.
     """
-    # Try OAuth first (.credentials.json) — use _try_read_json to avoid
-    # is_file() failures under SELinux :Z relabeling in rootless podman.
+    # Try OAuth first (.credentials.json)
     cred_file = base_dir / ".credentials.json"
     data = _try_read_json(cred_file)
+
+    # DEBUG: dump what we actually read so we can fix the key path
+    if data is not None:
+        import sys
+
+        print(f"\nDEBUG: .credentials.json top-level keys: {list(data.keys())}", file=sys.stderr)
+        for k, v in data.items():
+            vtype = type(v).__name__
+            vkeys = f" keys={list(v.keys())}" if isinstance(v, dict) else ""
+            print(f"DEBUG:   {k}: {vtype}{vkeys}", file=sys.stderr)
+
     if data is not None:
         oauth = _expect_mapping(data.get("claudeAiOauth", {}), context=f"{cred_file}:claudeAiOauth")
         token_data = _expect_mapping(oauth.get("token", {}), context=f"{cred_file}:token")
