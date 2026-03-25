@@ -52,20 +52,22 @@ class TestCaptureCredentials:
         assert stored["key"] == "blab-key"
 
     def test_extraction_failure_prints_warning(self, tmp_path: Path, capsys) -> None:
-        """Failed extraction prints a warning but doesn't raise."""
+        """Failed extraction prints a warning mentioning the provider."""
         # Empty dir — no credential file to extract
         _capture_credentials("claude", tmp_path, "default")
 
         out = capsys.readouterr().out
         assert "Warning" in out
+        assert "claude" in out
         assert "not captured" in out
 
     def test_unknown_provider_prints_warning(self, tmp_path: Path, capsys) -> None:
-        """Unknown provider prints a warning but doesn't raise."""
+        """Unknown provider prints a warning mentioning the provider name."""
         _capture_credentials("unknown-agent", tmp_path, "default")
 
         out = capsys.readouterr().out
         assert "Warning" in out
+        assert "unknown-agent" in out
 
     def test_db_failure_prints_warning(self, tmp_path: Path, capsys) -> None:
         """If DB storage fails, prints warning but doesn't raise."""

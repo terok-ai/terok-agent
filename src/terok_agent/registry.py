@@ -275,6 +275,10 @@ def _to_proxy_route(name: str, data: dict) -> CredentialProxyRoute | None:
     cp = data.get("credential_proxy")
     if not cp:
         return None
+    if not isinstance(cp, dict):
+        raise ValueError(
+            f"Agent {name!r}: credential_proxy must be a mapping, got {type(cp).__name__}"
+        )
     return CredentialProxyRoute(
         provider=name,
         route_prefix=cp["route_prefix"],
@@ -370,12 +374,15 @@ class AgentRegistry:
         import json
 
         routes: dict[str, dict[str, str]] = {}
+        prefix_owners: dict[str, str] = {}
         for route in self._proxy_routes.values():
-            if route.route_prefix in routes:
+            existing = prefix_owners.get(route.route_prefix)
+            if existing is not None:
                 raise ValueError(
-                    f"Duplicate route prefix {route.route_prefix!r} "
-                    f"(provider {route.provider!r} collides with an earlier entry)"
+                    f"Duplicate route prefix {route.route_prefix!r}: "
+                    f"providers {existing!r} and {route.provider!r}"
                 )
+            prefix_owners[route.route_prefix] = route.provider
             routes[route.route_prefix] = {
                 "upstream": route.upstream,
                 "auth_header": route.auth_header,

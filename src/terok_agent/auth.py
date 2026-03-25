@@ -160,8 +160,6 @@ def _run_auth_container(
         # the temp dir is deleted afterwards, the shared mount is never written to.
         shared_dir = envs_base_dir / provider.host_dir_name
         if shared_dir.is_dir():
-            import shutil
-
             for item in shared_dir.iterdir():
                 dest = host_dir / item.name
                 try:
@@ -240,9 +238,11 @@ def _capture_credentials(provider_name: str, auth_dir: Path, credential_set: str
 
         cfg = SandboxConfig()
         db = CredentialDB(cfg.proxy_db_path)
-        db.store_credential(credential_set, provider_name, cred_data)
-        db.close()
-        print(f"\nCredentials captured for {provider_name} (set: {credential_set})")
+        try:
+            db.store_credential(credential_set, provider_name, cred_data)
+            print(f"\nCredentials captured for {provider_name} (set: {credential_set})")
+        finally:
+            db.close()
     except Exception as exc:
         print(f"\nWarning: failed to store credentials: {exc}")
         print("The auth flow completed but credentials were not saved to the proxy DB.")

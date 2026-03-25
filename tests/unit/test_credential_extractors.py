@@ -70,6 +70,12 @@ class TestCodexOAuth:
         with pytest.raises(ValueError, match="not found"):
             extract_codex_oauth(tmp_path)
 
+    def test_missing_tokens_field_raises(self, tmp_path: Path) -> None:
+        """Raises when tokens field has no access_token."""
+        (tmp_path / "auth.json").write_text(json.dumps({"tokens": {}}))
+        with pytest.raises(ValueError, match="no access_token"):
+            extract_codex_oauth(tmp_path)
+
 
 class TestApiKeyEnv:
     """Verify dotenv-style API key extraction."""
@@ -81,11 +87,17 @@ class TestApiKeyEnv:
         assert result["key"] == "test-key-123"
         assert result["type"] == "api_key"
 
-    def test_strips_quotes(self, tmp_path: Path) -> None:
-        """Strips surrounding quotes from values."""
+    def test_strips_single_quotes(self, tmp_path: Path) -> None:
+        """Strips single quotes from values."""
         (tmp_path / ".env").write_text("MISTRAL_API_KEY='quoted-key'\n")
         result = extract_api_key_env(tmp_path, ".env", "MISTRAL_API_KEY")
         assert result["key"] == "quoted-key"
+
+    def test_strips_double_quotes(self, tmp_path: Path) -> None:
+        """Strips double quotes from values."""
+        (tmp_path / ".env").write_text('MISTRAL_API_KEY="dquoted-key"\n')
+        result = extract_api_key_env(tmp_path, ".env", "MISTRAL_API_KEY")
+        assert result["key"] == "dquoted-key"
 
     def test_skips_comments_and_blanks(self, tmp_path: Path) -> None:
         """Skips comment lines and empty lines."""
@@ -118,6 +130,11 @@ class TestJsonApiKey:
         """Raises ValueError when api_key field is absent."""
         (tmp_path / "config.json").write_text(json.dumps({"other": "value"}))
         with pytest.raises(ValueError, match="No api_key"):
+            extract_json_api_key(tmp_path)
+
+    def test_missing_file_raises(self, tmp_path: Path) -> None:
+        """Raises ValueError when config.json is missing."""
+        with pytest.raises(ValueError, match="not found"):
             extract_json_api_key(tmp_path)
 
 
@@ -162,6 +179,11 @@ class TestGlabToken:
         result = extract_glab_token(tmp_path)
         assert result["token"] == "glpat-test456"
         assert result["host"] == "gitlab.com"
+
+    def test_missing_file_raises(self, tmp_path: Path) -> None:
+        """Raises ValueError when config.yml is missing."""
+        with pytest.raises(ValueError, match="not found"):
+            extract_glab_token(tmp_path)
 
 
 class TestGlabTokenEdgeCases:

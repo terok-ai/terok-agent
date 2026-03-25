@@ -135,8 +135,9 @@ def extract_gh_token(base_dir: Path) -> dict:
     if not isinstance(data, dict):
         raise ValueError(f"Unexpected hosts.yml format: {type(data)}")
 
-    # Try github.com first, then any host
-    for host in ("github.com", *data):
+    # Try github.com first, then remaining hosts (deduplicated)
+    ordered = ["github.com"] + [h for h in data if h != "github.com"]
+    for host in ordered:
         host_data = data.get(host, {})
         if isinstance(host_data, dict):
             token = host_data.get("oauth_token")
