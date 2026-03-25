@@ -33,7 +33,10 @@ capabilities:
 credential_proxy:
   route_prefix: claude
   upstream: https://api.anthropic.com
-  auth_header: x-api-key
+  # Auth header is dynamic: OAuth uses "Authorization: Bearer <token>",
+  # API key uses "x-api-key: <key>". The proxy selects based on the
+  # credential type stored in the DB.
+  auth_header: dynamic
   auth_prefix: ""
   credential_type: oauth
   credential_file: .credentials.json
