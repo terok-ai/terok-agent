@@ -43,13 +43,29 @@ class AuthProvider:
     """Mount point inside the container (e.g. ``"/home/dev/.codex"``)."""
 
     command: list[str]
-    """Command to execute inside the container."""
+    """Command to execute inside the container (OAuth mode only)."""
 
     banner_hint: str
     """Provider-specific help text shown before the container runs."""
 
     extra_run_args: tuple[str, ...] = field(default_factory=tuple)
     """Additional ``podman run`` arguments (e.g. port forwarding)."""
+
+    modes: tuple[str, ...] = ("api_key",)
+    """Supported auth modes: ``"oauth"`` (container), ``"api_key"`` (fast path)."""
+
+    api_key_hint: str = ""
+    """Hint shown when prompting for an API key (URL to get one)."""
+
+    @property
+    def supports_oauth(self) -> bool:
+        """Whether this provider supports OAuth (container-based) auth."""
+        return "oauth" in self.modes
+
+    @property
+    def supports_api_key(self) -> bool:
+        """Whether this provider supports direct API key entry."""
+        return "api_key" in self.modes
 
 
 # ---------------------------------------------------------------------------
@@ -260,6 +276,16 @@ def store_api_key(
         db.close()
 
 
+def _prompt_api_key(info: AuthProvider) -> str:
+    """Interactively prompt for an API key."""
+    if info.api_key_hint:
+        print(info.api_key_hint)
+    key = input(f"{info.label} API key: ").strip()
+    if not key:
+        raise SystemExit("No API key entered.")
+    return key
+
+
 def authenticate(
     project_id: str,
     provider: str,
@@ -268,6 +294,12 @@ def authenticate(
     image: str,
 ) -> None:
     """Run the auth flow for *provider* against *project_id*.
+
+    Dispatches based on the provider's ``modes`` field:
+
+    - **api_key only**: prompt for key, store directly (no container)
+    - **oauth only**: launch container with vendor CLI
+    - **both**: ask user to choose, then dispatch accordingly
 
     Args:
         project_id: Project identifier (for container naming).
@@ -281,4 +313,26 @@ def authenticate(
     if not info:
         available = ", ".join(AUTH_PROVIDERS)
         raise SystemExit(f"Unknown auth provider: {provider}. Available: {available}")
-    _run_auth_container(project_id, info, envs_base_dir=envs_base_dir, image=image)
+
+    if info.supports_oauth and info.supports_api_key:
+        # Both modes — let the user choose
+        print(f"Authenticate {info.label}:\n")
+        print("  1. OAuth / interactive login (launches container)")
+        print("  2. API key (paste key, no container needed)")
+        print()
+        choice = input("Choose [1/2]: ").strip()
+        if choice == "2":
+            key = _prompt_api_key(info)
+            store_api_key(provider, key)
+            return
+        # choice == "1" or anything else → OAuth
+        _run_auth_container(project_id, info, envs_base_dir=envs_base_dir, image=image)
+
+    elif info.supports_api_key:
+        # API key only — fast path, no container
+        key = _prompt_api_key(info)
+        store_api_key(provider, key)
+
+    else:
+        # OAuth only
+        _run_auth_container(project_id, info, envs_base_dir=envs_base_dir, image=image)

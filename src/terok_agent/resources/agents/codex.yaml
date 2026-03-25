@@ -37,8 +37,10 @@ credential_proxy:
 auth:
   host_dir: _codex-config
   container_mount: /home/dev/.codex
+  modes: [oauth, api_key]
   command: ["setup-codex-auth.sh"]
   banner_hint: |-
     This will set up port forwarding (using socat) and open a browser for authentication.
     After completing authentication, press Ctrl+C to stop the container.
   extra_run_args: ["-p", "127.0.0.1:1455:1455"]
+  api_key_hint: "Get your API key at: https://platform.openai.com/api-keys"

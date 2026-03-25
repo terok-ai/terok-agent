@@ -16,7 +16,9 @@ credential_proxy:
 auth:
   host_dir: _gh-config
   container_mount: /home/dev/.config/gh
+  modes: [oauth, api_key]
   command: ["gh", "auth", "login"]
   banner_hint: |-
     You will be guided through GitHub authentication.
     Recommended: choose 'Login with a web browser' or paste a token.
+  api_key_hint: "Paste a GitHub personal access token (https://github.com/settings/tokens)"

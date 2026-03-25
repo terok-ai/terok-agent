@@ -44,7 +44,9 @@ credential_proxy:
 auth:
   host_dir: _claude-config
   container_mount: /home/dev/.claude
-  command: ["claude"]
+  modes: [oauth, api_key]          # oauth requires container, api_key is fast-path
+  command: ["claude"]               # only used for oauth mode
   banner_hint: |-
     Claude will guide you through authentication (OAuth or API key).
     After completing auth, exit Claude with /exit or Ctrl+C.
+  api_key_hint: "Get your API key at: https://console.anthropic.com/settings/keys"

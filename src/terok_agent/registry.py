@@ -157,7 +157,8 @@ def _to_auth_provider(name: str, data: dict) -> AuthProvider | None:
     if not auth:
         return None
 
-    # Determine command: explicit command list, or build from auth_key config
+    # Determine command: explicit command list, or build from auth_key config.
+    # API-key-only providers may have no command — that's fine.
     auth_key_data = auth.get("auth_key")
     if "command" in auth:
         command = list(auth["command"])
@@ -173,7 +174,9 @@ def _to_auth_provider(name: str, data: dict) -> AuthProvider | None:
             )
         )
     else:
-        return None
+        command = []
+
+    modes = tuple(auth.get("modes", ("api_key",)))
 
     return AuthProvider(
         name=name,
@@ -183,12 +186,14 @@ def _to_auth_provider(name: str, data: dict) -> AuthProvider | None:
         command=command,
         banner_hint=auth.get("banner_hint", ""),
         extra_run_args=tuple(auth.get("extra_run_args", ())),
+        modes=modes,
+        api_key_hint=auth.get("api_key_hint", ""),
     )
 
 
 def _derive_opencode_auth(name: str, data: dict) -> AuthProvider | None:
     """Auto-derive an auth provider for an OpenCode-based agent."""
-    from .auth import AuthKeyConfig, AuthProvider, _api_key_command
+    from .auth import AuthProvider
 
     oc = data.get("opencode")
     if not oc:
@@ -199,20 +204,10 @@ def _derive_opencode_auth(name: str, data: dict) -> AuthProvider | None:
         label=data.get("label", name),
         host_dir_name=f"_{name}-config",
         container_mount=f"/home/dev/{oc['config_dir']}",
-        command=_api_key_command(
-            AuthKeyConfig(
-                label=data.get("label", name),
-                key_url=oc["auth_key_url"],
-                env_var=f"{oc['env_var_prefix']}_API_KEY",
-                config_path=f"~/{oc['config_dir']}/config.json",
-                printf_template='{"api_key": "%s"}',
-                tool_name=name,
-            )
-        ),
-        banner_hint=(
-            f"You will be prompted to enter your {data.get('label', name)} API key.\n"
-            f"Get your API key at: {oc['auth_key_url']}"
-        ),
+        command=[],  # API-key-only — no container command needed
+        banner_hint="",
+        modes=("api_key",),
+        api_key_hint=f"Get your API key at: {oc['auth_key_url']}",
     )
 
 

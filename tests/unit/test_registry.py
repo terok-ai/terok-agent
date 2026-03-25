@@ -370,14 +370,17 @@ class TestRegistryBehavior:
             assert p.git_author_email
             assert p.log_format in {"plain", "claude-stream-json"}
 
-    def test_every_auth_provider_has_valid_command(self) -> None:
-        """Each auth provider has a non-empty command and mount paths."""
+    def test_every_auth_provider_has_valid_config(self) -> None:
+        """Each auth provider has mount paths and at least one auth mode."""
         reg = load_registry()
         for name, ap in reg.auth_providers.items():
             assert isinstance(ap, AuthProvider)
-            assert ap.command, f"{name}: empty auth command"
             assert ap.host_dir_name, f"{name}: empty host_dir"
             assert ap.container_mount, f"{name}: empty container_mount"
+            assert ap.modes, f"{name}: no auth modes"
+            # OAuth providers must have a container command
+            if ap.supports_oauth:
+                assert ap.command, f"{name}: oauth mode but no command"
 
     def test_opencode_providers_have_complete_config(self) -> None:
         """Providers with opencode config have all required fields populated."""

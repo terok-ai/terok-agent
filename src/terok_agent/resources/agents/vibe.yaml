@@ -40,13 +40,5 @@ credential_proxy:
 auth:
   host_dir: _vibe-config
   container_mount: /home/dev/.vibe
-  auth_key:
-    label: Mistral
-    key_url: https://console.mistral.ai/api-keys
-    env_var: MISTRAL_API_KEY
-    config_path: ~/.vibe/.env
-    printf_template: "MISTRAL_API_KEY=%s"
-    tool_name: vibe
-  banner_hint: |-
-    You will be prompted to enter your Mistral API key.
-    Get your API key at: https://console.mistral.ai/api-keys
+  modes: [api_key]
+  api_key_hint: "Get your API key at: https://console.mistral.ai/api-keys"
