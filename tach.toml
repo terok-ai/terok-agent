@@ -92,7 +92,6 @@ depends_on = []
 [[modules]]
 path = "terok_agent.runner"
 depends_on = [
-    "terok_agent._util",
     "terok_agent.agents",
     "terok_agent.build",
     "terok_agent.headless_providers",
