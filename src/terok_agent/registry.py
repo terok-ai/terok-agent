@@ -274,6 +274,9 @@ def _to_proxy_route(name: str, data: dict) -> CredentialProxyRoute | None:
         raise ValueError(
             f"Agent {name!r}: credential_proxy must be a mapping, got {type(cp).__name__}"
         )
+    for required in ("route_prefix", "upstream"):
+        if required not in cp:
+            raise ValueError(f"Agent {name!r}: credential_proxy missing required key {required!r}")
     return CredentialProxyRoute(
         provider=name,
         route_prefix=cp["route_prefix"],

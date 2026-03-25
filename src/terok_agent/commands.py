@@ -150,10 +150,15 @@ def _handle_run(
 
 def _handle_auth(*, agent: str, api_key: str | None = None) -> None:
     """Run auth flow for an agent."""
-    from .auth import authenticate, store_api_key
+    from .auth import AUTH_PROVIDERS, authenticate, store_api_key
 
     if api_key is not None:
-        store_api_key(agent, api_key)
+        if not api_key.strip():
+            raise SystemExit("API key cannot be empty.")
+        if agent not in AUTH_PROVIDERS:
+            available = ", ".join(AUTH_PROVIDERS)
+            raise SystemExit(f"Unknown provider: {agent}. Available: {available}")
+        store_api_key(agent, api_key.strip())
         return
 
     from .build import l1_image_tag

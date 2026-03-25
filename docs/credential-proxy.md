@@ -20,7 +20,7 @@ Claude Max, Pro, Team, and Enterprise plans.
 
 ## Architecture
 
-```
+```text
 HOST                                    CONTAINER
 ─────────────────────────              ─────────────────────────
 Credential DB (sqlite3)                 Phantom API keys (env vars)
@@ -63,7 +63,7 @@ for automated workflows and CI.
 
 For providers supporting both OAuth and API key (Claude, Codex, gh):
 
-```
+```text
 $ terok-agent auth claude
 Authenticate Claude:
 

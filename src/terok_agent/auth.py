@@ -277,10 +277,12 @@ def store_api_key(
 
 
 def _prompt_api_key(info: AuthProvider) -> str:
-    """Interactively prompt for an API key."""
+    """Interactively prompt for an API key (input is hidden)."""
+    import getpass
+
     if info.api_key_hint:
         print(info.api_key_hint)
-    key = input(f"{info.label} API key: ").strip()
+    key = getpass.getpass(f"{info.label} API key: ").strip()
     if not key:
         raise SystemExit("No API key entered.")
     return key
