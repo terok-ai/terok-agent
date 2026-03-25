@@ -497,17 +497,27 @@ def generate_agent_wrapper(
 
 
 _RESUME_FALLBACK_FN = """\
-# Stale-session guard: run agent, retry without resume on immediate failure.
-# When an agent exits non-zero within seconds and resume args were active,
-# the captured session ID likely refers to a conversation that was never
-# persisted (e.g. user started Claude, exited immediately).  Remove the
-# stale session file and re-run without --resume/--session.
+# WORKAROUND: stale-session guard (timing-based heuristic).
+#
+# When a user starts an agent, exits immediately (no real interaction),
+# and re-runs, the captured session ID points to a conversation that was
+# never persisted.  The agent then fails with "No conversation found".
+#
+# This is a best-effort mitigation, not a proper fix: we assume that
+# any non-zero exit within 2 seconds of launch is a stale-session error
+# and retry without --resume.  This heuristic can misfire (e.g. a fast
+# config error would also trigger a retry), but the retry is harmless —
+# it just runs without resume, which is the correct fallback anyway.
+#
+# A proper fix would validate the session ID against the agent's storage
+# before injecting --resume, but that requires agent-specific probes
+# that don't exist yet.
 _terok_resume_or_fresh() {
     local _session_file="$1" _resume_flag="$2"; shift 2
     local _start; _start=$(date +%s)
     "$@"; local _rc=$?
     local _elapsed=$(( $(date +%s) - _start ))
-    if [ $_rc -ne 0 ] && [ $_elapsed -lt 5 ] && [ -s "$_session_file" ]; then
+    if [ $_rc -ne 0 ] && [ $_elapsed -lt 2 ] && [ -s "$_session_file" ]; then
         echo "terok: session not found (stale?), retrying without resume" >&2
         rm -f "$_session_file"
         local _retry=() _skip=false
