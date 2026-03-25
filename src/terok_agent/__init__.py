@@ -52,7 +52,7 @@ from .agent_config import resolve_provider_value
 from .agents import AgentConfigSpec, parse_md_agent, prepare_agent_config_dir
 
 # -- Auth ----------------------------------------------------------------------
-from .auth import AUTH_PROVIDERS, AuthProvider, authenticate
+from .auth import AUTH_PROVIDERS, AuthProvider, authenticate, store_api_key
 
 # -- Build: image construction + resource staging ------------------------------
 from .build import (
@@ -137,6 +137,7 @@ __all__ = [
     "AUTH_PROVIDERS",
     "AuthProvider",
     "authenticate",
+    "store_api_key",
     # Instructions
     "bundled_default_instructions",
     "resolve_instructions",

@@ -33,27 +33,45 @@ Credential Proxy (aiohttp)              Proxy socket (mounted)
 
 ## Auth Flow
 
-### Two kinds of containers
+### Two auth modes
 
-**Auth containers** (ephemeral, one-shot):
+For providers with native CLI tools that handle OAuth (Claude, Codex):
 
-1. `terok-agent auth <provider>` creates a temporary container
-2. Config dir is mounted to a **temp directory** (not the shared mount)
-3. Existing non-secret config (settings, memories) is copied into the temp dir
-   so the auth tool has a familiar environment
-4. Vendor auth command runs interactively (browser OAuth, API key prompt, etc.)
-5. After exit, per-provider **extractors** parse the credential file from the temp dir
-6. Extracted credentials are stored in the sqlite **Credential DB**
-7. Temp directory is deleted
-8. The shared config mount **never sees real credentials**
+```
+terok-agent auth claude
+```
 
-**Task containers** (long-lived):
+Runs the vendor CLI (`claude`) in an ephemeral container with an **empty**
+config directory.  The CLI goes through its own auth flow (OAuth browser
+redirect, device code, etc.) and writes credentials to the temp dir.
 
-1. Shared config dirs mounted as before (settings, memories, plans)
-2. Phantom API key env vars injected
-3. Base URL env vars point to proxy socket
-4. Agent operates in "API key mode" — never touches OAuth, never reads credential files
-5. All API calls routed through proxy
+For providers that use API keys (Vibe, Blablador, KISSKI):
+
+```
+terok-agent auth vibe
+```
+
+Prompts the user for an API key and writes it to the expected config file.
+
+Both modes can also accept a key non-interactively:
+
+```
+terok-agent auth claude --api-key sk-ant-...
+terok-agent auth vibe --api-key 8UL...
+```
+
+This stores the key directly in the credential DB without launching a
+container — useful for automated workflows and CI.
+
+### Auth container lifecycle
+
+1. `terok-agent auth <provider>` creates an **empty** temp directory
+2. The temp dir is mounted as the provider's config dir (e.g. `/home/dev/.claude`)
+3. The auth tool starts with a clean slate — no existing config, sessions, or cached auth
+4. After the auth tool exits, per-provider **extractors** parse the credential files
+5. Extracted credentials are stored in the sqlite **Credential DB**
+6. The temp directory is deleted
+7. The shared config mount (settings, memories, plans) is **never touched**
 
 ### Data flow diagram
 
@@ -61,23 +79,35 @@ Credential Proxy (aiohttp)              Proxy socket (mounted)
 terok-agent auth claude
          │
          ▼
-┌─────────────────────────────┐
-│  Temp dir (/tmp/terok-auth-…)│
-│  ├── settings.json (copied)  │
-│  └── .credentials.json (NEW) │  ← written by Claude's auth flow
-└──────────┬──────────────────┘
+┌──────────────────────────────┐
+│  Empty temp dir               │
+│  (mounted as /home/dev/.claude│
+│   inside the auth container)  │
+│                               │
+│  Claude CLI runs OAuth flow → │
+│  writes .credentials.json     │
+└──────────┬───────────────────┘
            │ extract_claude_oauth()
            ▼
-┌─────────────────────────────┐
-│  Credential DB (sqlite3)     │
-│  credentials table:          │
-│    default | claude | {…}    │
-└─────────────────────────────┘
+┌──────────────────────────────┐
+│  Credential DB (sqlite3)      │
+│  credentials table:           │
+│    default | claude | {…}     │
+└──────────────────────────────┘
            │ temp dir deleted
            ▼
   Shared mount (~/.claude/) untouched
   (settings, memories — no secrets)
 ```
+
+### Two kinds of task containers
+
+**Auth containers** (ephemeral, one-shot): empty config mount, real auth flow,
+credentials captured to DB.
+
+**Task containers** (long-lived): shared config dirs mounted (settings, memories),
+phantom API keys injected, base URL env vars point to proxy socket.  Agent
+operates in "API key mode" — never touches OAuth, never reads credential files.
 
 ## Per-Provider Credential Extractors
 
@@ -88,6 +118,7 @@ credential files and return a normalized dict with at least one of
 | Provider  | File                   | Extractor                | Key fields           |
 |-----------|------------------------|--------------------------|----------------------|
 | Claude    | `.credentials.json`    | `extract_claude_oauth`   | access_token, refresh_token |
+| Claude    | `config.json`          | (fallback)               | key (api_key)        |
 | Codex     | `auth.json`            | `extract_codex_oauth`    | access_token, refresh_token |
 | Vibe      | `.env`                 | `extract_api_key_env`    | key (MISTRAL_API_KEY) |
 | Blablador | `config.json`          | `extract_json_api_key`   | key (api_key)        |
@@ -97,7 +128,7 @@ credential files and return a normalized dict with at least one of
 
 ## YAML Registry Extension
 
-Each agent YAML now declares a `credential_proxy:` section:
+Each agent YAML declares a `credential_proxy:` section:
 
 ```yaml
 credential_proxy:

@@ -9,7 +9,7 @@ import json
 from pathlib import Path
 from unittest.mock import patch
 
-from terok_agent.auth import _capture_credentials
+from terok_agent.auth import _capture_credentials, store_api_key
 
 
 class TestCaptureCredentials:
@@ -96,3 +96,35 @@ class TestCaptureCredentials:
         stored = db.load_credential("work-project", "kisski")
         db.close()
         assert stored["key"] == "work-key"
+
+
+class TestStoreApiKey:
+    """Verify direct API key storage (--api-key flag)."""
+
+    def test_stores_key(self, tmp_path: Path) -> None:
+        """store_api_key writes to the DB without a container."""
+        db_path = tmp_path / "proxy" / "credentials.db"
+        with patch("terok_sandbox.SandboxConfig") as mock_cfg_cls:
+            mock_cfg_cls.return_value.proxy_db_path = db_path
+            store_api_key("vibe", "sk-test-key-123")
+
+        from terok_sandbox import CredentialDB
+
+        db = CredentialDB(db_path)
+        stored = db.load_credential("default", "vibe")
+        db.close()
+        assert stored == {"type": "api_key", "key": "sk-test-key-123"}
+
+    def test_custom_credential_set(self, tmp_path: Path) -> None:
+        """store_api_key supports custom credential sets."""
+        db_path = tmp_path / "proxy" / "credentials.db"
+        with patch("terok_sandbox.SandboxConfig") as mock_cfg_cls:
+            mock_cfg_cls.return_value.proxy_db_path = db_path
+            store_api_key("claude", "sk-ant-key", credential_set="work")
+
+        from terok_sandbox import CredentialDB
+
+        db = CredentialDB(db_path)
+        stored = db.load_credential("work", "claude")
+        db.close()
+        assert stored["key"] == "sk-ant-key"

@@ -239,6 +239,27 @@ def _capture_credentials(provider_name: str, auth_dir: Path, credential_set: str
         print("The auth flow completed but credentials were not saved to the proxy DB.")
 
 
+def store_api_key(
+    provider: str,
+    api_key: str,
+    credential_set: str = "default",
+) -> None:
+    """Store an API key directly in the credential DB (no container needed).
+
+    This is the non-interactive fast path for automated workflows and CI.
+    The key is stored as ``{"type": "api_key", "key": "<value>"}``.
+    """
+    from terok_sandbox import CredentialDB, SandboxConfig
+
+    cfg = SandboxConfig()
+    db = CredentialDB(cfg.proxy_db_path)
+    try:
+        db.store_credential(credential_set, provider, {"type": "api_key", "key": api_key})
+        print(f"API key stored for {provider} (set: {credential_set})")
+    finally:
+        db.close()
+
+
 def authenticate(
     project_id: str,
     provider: str,
