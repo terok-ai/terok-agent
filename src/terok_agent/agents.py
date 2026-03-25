@@ -191,7 +191,13 @@ def _generate_claude_wrapper(cfg: WrapperConfig) -> str:
     lines.append('       { [ -n "$_timeout" ] || [ $# -eq 0 ]; } && \\')
     lines.append('        _args+=(--resume "$(cat /home/dev/.terok/claude-session.txt)")')
 
-    # Git env vars and exec — with optional timeout
+    # Git env vars and exec — with optional timeout.
+    # _terok_resume_or_fresh guards against stale session IDs: if the agent
+    # fails within seconds (conversation purged / never saved), the stale
+    # session file is removed and the command retried without --resume.
+    _session = "/home/dev/.terok/claude-session.txt"
+    _wrap = f"_terok_resume_or_fresh {_session} --resume"
+
     lines.append('    if [ -n "$_timeout" ]; then')
     lines.append("        (")
     lines.append(f"            _terok_apply_git_identity {author_name} {author_email}")
@@ -199,7 +205,7 @@ def _generate_claude_wrapper(cfg: WrapperConfig) -> str:
         "            export CLAUDE_COWORK_MEMORY_PATH_OVERRIDE="
         '"/home/dev/.claude/projects/${PROJECT_ID}-workspace/memory"'
     )
-    lines.append('            timeout "$_timeout" claude "${_args[@]}" "$@"')
+    lines.append(f'            {_wrap} timeout "$_timeout" claude "${{_args[@]}}" "$@"')
     lines.append("        )")
     lines.append("    else")
     lines.append("        (")
@@ -208,7 +214,7 @@ def _generate_claude_wrapper(cfg: WrapperConfig) -> str:
         "            export CLAUDE_COWORK_MEMORY_PATH_OVERRIDE="
         '"/home/dev/.claude/projects/${PROJECT_ID}-workspace/memory"'
     )
-    lines.append('            command claude "${_args[@]}" "$@"')
+    lines.append(f'            {_wrap} command claude "${{_args[@]}}" "$@"')
     lines.append("        )")
     lines.append("    fi")
     lines.append("}")
