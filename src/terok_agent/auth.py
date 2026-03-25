@@ -104,47 +104,6 @@ AUTH_PROVIDERS: dict[str, AuthProvider] = {}
 
 
 # ---------------------------------------------------------------------------
-# Credential file exclusion
-# ---------------------------------------------------------------------------
-
-# Known credential filenames per provider — these must never be copied from
-# the shared mount into the auth temp dir (they may be legacy leftovers from
-# before the credential proxy was enabled).
-_KNOWN_CREDENTIAL_FILES: dict[str, frozenset[str]] = {
-    "claude": frozenset({".credentials.json", "config.json"}),
-    "codex": frozenset({"auth.json"}),
-    "vibe": frozenset({".env"}),
-    "blablador": frozenset({"config.json"}),
-    "kisski": frozenset({"config.json"}),
-    "gh": frozenset({"hosts.yml"}),
-    "glab": frozenset({"config.yml"}),
-}
-
-
-def _credential_file_names(provider_name: str) -> frozenset[str]:
-    """Return credential filenames for *provider_name*.
-
-    Uses a static mapping of known credential filenames per provider.
-    This avoids a circular import (auth ↔ registry) while covering all
-    bundled providers.
-    """
-    return _KNOWN_CREDENTIAL_FILES.get(provider_name, frozenset())
-
-
-def _purge_credential_files(root: Path, names: frozenset[str]) -> None:
-    """Recursively remove files matching *names* from *root*.
-
-    Ensures the auth container starts unauthenticated so the CLI tool
-    goes through the full auth flow and writes fresh credential files.
-    """
-    if not names:
-        return
-    for path in root.rglob("*"):
-        if path.is_file() and path.name in names:
-            path.unlink(missing_ok=True)
-
-
-# ---------------------------------------------------------------------------
 # Shared container lifecycle
 # ---------------------------------------------------------------------------
 
