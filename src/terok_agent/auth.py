@@ -154,18 +154,26 @@ def _run_auth_container(
     with tempfile.TemporaryDirectory(prefix=f"terok-auth-{provider.name}-") as tmpdir:
         host_dir = Path(tmpdir)
 
-        # Copy existing config (settings, memories) from shared mount into temp dir
-        # so the auth tool has a familiar environment
+        # Seed the temp dir with existing non-secret config (settings, memories,
+        # sessions) so the auth tool finds a familiar environment.  Only the
+        # credential file produced by the auth flow is extracted to the DB —
+        # the temp dir is deleted afterwards, the shared mount is never written to.
         shared_dir = envs_base_dir / provider.host_dir_name
         if shared_dir.is_dir():
             import shutil
 
             for item in shared_dir.iterdir():
                 dest = host_dir / item.name
-                if item.is_dir():
-                    shutil.copytree(item, dest, dirs_exist_ok=True)
-                else:
-                    shutil.copy2(item, dest)
+                try:
+                    if item.is_dir():
+                        shutil.copytree(item, dest, symlinks=True, dirs_exist_ok=True)
+                    elif item.is_symlink():
+                        # Preserve symlinks (may be dangling — that's OK)
+                        dest.symlink_to(item.readlink())
+                    else:
+                        shutil.copy2(item, dest)
+                except OSError:
+                    pass  # skip unreadable/broken entries — non-fatal
 
         container_name = f"{project_id}-auth-{provider.name}"
         _cleanup_existing_container(container_name)
