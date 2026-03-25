@@ -87,6 +87,18 @@ class TestApiKeyEnv:
         result = extract_api_key_env(tmp_path, ".env", "MISTRAL_API_KEY")
         assert result["key"] == "quoted-key"
 
+    def test_skips_comments_and_blanks(self, tmp_path: Path) -> None:
+        """Skips comment lines and empty lines."""
+        (tmp_path / ".env").write_text("# comment\n\nMISTRAL_API_KEY=real-key\n")
+        result = extract_api_key_env(tmp_path, ".env", "MISTRAL_API_KEY")
+        assert result["key"] == "real-key"
+
+    def test_wrong_var_name_raises(self, tmp_path: Path) -> None:
+        """Raises when the requested var name is not found."""
+        (tmp_path / ".env").write_text("OTHER_VAR=something\n")
+        with pytest.raises(ValueError, match="No API key"):
+            extract_api_key_env(tmp_path, ".env", "MISTRAL_API_KEY")
+
     def test_missing_file_raises(self, tmp_path: Path) -> None:
         """Raises ValueError when file is missing."""
         with pytest.raises(ValueError, match="not found"):
@@ -121,6 +133,18 @@ class TestGhToken:
         assert result["token"] == "ghp_test123"
         assert result["host"] == "github.com"
 
+    def test_no_token_raises(self, tmp_path: Path) -> None:
+        """Raises when no host has an oauth_token."""
+        (tmp_path / "hosts.yml").write_text("github.com:\n  user: test\n")
+        with pytest.raises(ValueError, match="No oauth_token"):
+            extract_gh_token(tmp_path)
+
+    def test_non_dict_root_raises(self, tmp_path: Path) -> None:
+        """Raises for non-dict YAML root."""
+        (tmp_path / "hosts.yml").write_text("- item\n")
+        with pytest.raises(ValueError, match="Unexpected"):
+            extract_gh_token(tmp_path)
+
     def test_missing_file_raises(self, tmp_path: Path) -> None:
         """Raises ValueError when file is missing."""
         with pytest.raises(ValueError, match="not found"):
@@ -138,6 +162,22 @@ class TestGlabToken:
         result = extract_glab_token(tmp_path)
         assert result["token"] == "glpat-test456"
         assert result["host"] == "gitlab.com"
+
+
+class TestGlabTokenEdgeCases:
+    """Additional glab edge cases."""
+
+    def test_no_token_raises(self, tmp_path: Path) -> None:
+        """Raises when no host has a token."""
+        (tmp_path / "config.yml").write_text("hosts:\n  gitlab.com:\n    api_host: gitlab.com\n")
+        with pytest.raises(ValueError, match="No token"):
+            extract_glab_token(tmp_path)
+
+    def test_non_dict_root_raises(self, tmp_path: Path) -> None:
+        """Raises for non-dict YAML root."""
+        (tmp_path / "config.yml").write_text("- item\n")
+        with pytest.raises(ValueError, match="Unexpected"):
+            extract_glab_token(tmp_path)
 
 
 class TestMalformedPayloads:
