@@ -18,7 +18,7 @@ class TestCaptureCredentials:
     def test_captures_claude_credentials(self, tmp_path: Path) -> None:
         """Successful extraction stores credentials in the DB."""
         # Create a fake Claude credential file
-        cred = {"claudeAiOauth": {"token": {"accessToken": "sk-test-123"}}}
+        cred = {"claudeAiOauth": {"accessToken": "sk-test-123"}}
         (tmp_path / ".credentials.json").write_text(json.dumps(cred))
 
         db_path = tmp_path / "proxy" / "credentials.db"
@@ -71,7 +71,7 @@ class TestCaptureCredentials:
 
     def test_db_failure_prints_warning(self, tmp_path: Path, capsys) -> None:
         """If DB storage fails, prints warning but doesn't raise."""
-        cred = {"claudeAiOauth": {"token": {"accessToken": "sk-test"}}}
+        cred = {"claudeAiOauth": {"accessToken": "sk-test"}}
         (tmp_path / ".credentials.json").write_text(json.dumps(cred))
 
         with patch("terok_sandbox.SandboxConfig", side_effect=RuntimeError("DB broken")):

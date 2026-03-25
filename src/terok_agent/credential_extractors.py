@@ -50,30 +50,20 @@ def extract_claude_oauth(base_dir: Path) -> dict:
     ``{"api_key": "..."}``.  Both paths are checked.
     """
     # Try OAuth first (.credentials.json)
+    # Structure: {"claudeAiOauth": {"accessToken": "...", "refreshToken": "...", ...}}
     cred_file = base_dir / ".credentials.json"
     data = _try_read_json(cred_file)
-
-    # DEBUG: dump what we actually read so we can fix the key path
     if data is not None:
-        import sys
-
-        print(f"\nDEBUG: .credentials.json top-level keys: {list(data.keys())}", file=sys.stderr)
-        for k, v in data.items():
-            vtype = type(v).__name__
-            vkeys = f" keys={list(v.keys())}" if isinstance(v, dict) else ""
-            print(f"DEBUG:   {k}: {vtype}{vkeys}", file=sys.stderr)
-
-    if data is not None:
-        oauth = _expect_mapping(data.get("claudeAiOauth", {}), context=f"{cred_file}:claudeAiOauth")
-        token_data = _expect_mapping(oauth.get("token", {}), context=f"{cred_file}:token")
-        access_token = token_data.get("accessToken")
-        if access_token:
-            return {
-                "type": "oauth",
-                "access_token": access_token,
-                "refresh_token": token_data.get("refreshToken", ""),
-                "expires_at": token_data.get("expiresAt"),
-            }
+        oauth = data.get("claudeAiOauth", {})
+        if isinstance(oauth, dict):
+            access_token = oauth.get("accessToken")
+            if access_token:
+                return {
+                    "type": "oauth",
+                    "access_token": access_token,
+                    "refresh_token": oauth.get("refreshToken", ""),
+                    "expires_at": oauth.get("expiresAt"),
+                }
 
     # Fall back to API key (config.json)
     config_file = base_dir / "config.json"

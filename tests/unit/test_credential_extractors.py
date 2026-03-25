@@ -28,11 +28,9 @@ class TestClaudeOAuth:
         """Extracts accessToken from .credentials.json (OAuth path)."""
         cred = {
             "claudeAiOauth": {
-                "token": {
-                    "accessToken": "sk-ant-test-123",
-                    "refreshToken": "rt-test-456",
-                    "expiresAt": 1700000000,
-                }
+                "accessToken": "sk-ant-test-123",
+                "refreshToken": "rt-test-456",
+                "expiresAt": 1700000000,
             }
         }
         (tmp_path / ".credentials.json").write_text(json.dumps(cred))
@@ -50,7 +48,7 @@ class TestClaudeOAuth:
 
     def test_oauth_takes_precedence(self, tmp_path: Path) -> None:
         """OAuth credentials win when both files exist."""
-        cred = {"claudeAiOauth": {"token": {"accessToken": "sk-oauth"}}}
+        cred = {"claudeAiOauth": {"accessToken": "sk-oauth"}}
         (tmp_path / ".credentials.json").write_text(json.dumps(cred))
         (tmp_path / "config.json").write_text(json.dumps({"api_key": "sk-apikey"}))
         result = extract_claude_oauth(tmp_path)
@@ -64,14 +62,14 @@ class TestClaudeOAuth:
 
     def test_empty_oauth_falls_back_to_api_key(self, tmp_path: Path) -> None:
         """Empty OAuth token falls back to API key."""
-        (tmp_path / ".credentials.json").write_text(json.dumps({"claudeAiOauth": {"token": {}}}))
+        (tmp_path / ".credentials.json").write_text(json.dumps({"claudeAiOauth": {}}))
         (tmp_path / "config.json").write_text(json.dumps({"api_key": "sk-fallback"}))
         result = extract_claude_oauth(tmp_path)
         assert result["type"] == "api_key"
 
     def test_empty_everything_raises(self, tmp_path: Path) -> None:
         """Raises when OAuth has no token AND config.json has no api_key."""
-        (tmp_path / ".credentials.json").write_text(json.dumps({"claudeAiOauth": {"token": {}}}))
+        (tmp_path / ".credentials.json").write_text(json.dumps({"claudeAiOauth": {}}))
         with pytest.raises(ValueError, match="No Claude credentials"):
             extract_claude_oauth(tmp_path)
 
@@ -258,7 +256,7 @@ class TestExtractCredential:
 
     def test_dispatches_to_claude(self, tmp_path: Path) -> None:
         """extract_credential('claude', ...) calls extract_claude_oauth."""
-        cred = {"claudeAiOauth": {"token": {"accessToken": "sk-test"}}}
+        cred = {"claudeAiOauth": {"accessToken": "sk-test"}}
         (tmp_path / ".credentials.json").write_text(json.dumps(cred))
         result = extract_credential("claude", tmp_path)
         assert result["access_token"] == "sk-test"
