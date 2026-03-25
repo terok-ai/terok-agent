@@ -231,19 +231,19 @@ class TestMalformedPayloads:
     def test_claude_array_root_raises(self, tmp_path: Path) -> None:
         """Claude extractor rejects JSON array root."""
         (tmp_path / ".credentials.json").write_text("[]")
-        with pytest.raises(ValueError, match="Expected mapping"):
+        with pytest.raises(ValueError, match="No Claude credentials"):
             extract_claude_oauth(tmp_path)
 
     def test_codex_array_root_raises(self, tmp_path: Path) -> None:
         """Codex extractor rejects JSON array root."""
         (tmp_path / "auth.json").write_text("[]")
-        with pytest.raises(ValueError, match="Expected mapping"):
+        with pytest.raises(ValueError, match="not found or unreadable"):
             extract_codex_oauth(tmp_path)
 
     def test_json_api_key_array_root_raises(self, tmp_path: Path) -> None:
         """JSON API key extractor rejects non-mapping root."""
         (tmp_path / "config.json").write_text('"just a string"')
-        with pytest.raises(ValueError, match="Expected mapping"):
+        with pytest.raises(ValueError, match="not found or unreadable"):
             extract_json_api_key(tmp_path)
 
     def test_glab_non_mapping_hosts_raises(self, tmp_path: Path) -> None:

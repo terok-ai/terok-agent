@@ -191,32 +191,13 @@ def _run_auth_container(
 
     _check_podman()
 
-    # Use a temp dir as the mount target — secrets go here, then extracted
+    # Use an empty temp dir as the mount target.  The auth tool starts with
+    # a clean slate (no existing config, sessions, or cached auth) which
+    # forces a full re-authentication flow.  After the container exits, the
+    # extractor reads the credential file from the temp dir and stores it
+    # in the DB.  The shared config mount is never written to.
     with tempfile.TemporaryDirectory(prefix=f"terok-auth-{provider.name}-") as tmpdir:
         host_dir = Path(tmpdir)
-
-        # Seed the temp dir with existing non-secret config (settings, memories,
-        # sessions) so the auth tool finds a familiar environment.  Only the
-        # credential file produced by the auth flow is extracted to the DB —
-        # the temp dir is deleted afterwards, the shared mount is never written to.
-        credential_files = _credential_file_names(provider.name)
-        shared_dir = envs_base_dir / provider.host_dir_name
-        if shared_dir.is_dir():
-            for item in shared_dir.iterdir():
-                dest = host_dir / item.name
-                try:
-                    if item.is_dir():
-                        shutil.copytree(item, dest, symlinks=True, dirs_exist_ok=True)
-                    elif item.is_symlink():
-                        dest.symlink_to(item.readlink())
-                    else:
-                        shutil.copy2(item, dest)
-                except OSError:
-                    pass  # skip unreadable/broken entries — non-fatal
-
-        # Strip all known credential files so the CLI starts unauthenticated
-        # and goes through the full auth flow, writing fresh credentials.
-        _purge_credential_files(host_dir, credential_files)
 
         container_name = f"{project_id}-auth-{provider.name}"
         _cleanup_existing_container(container_name)

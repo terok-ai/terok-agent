@@ -19,6 +19,21 @@ import json
 from pathlib import Path
 
 
+def _try_read_json(path: Path) -> dict | None:
+    """Try to read and parse a JSON file, returning ``None`` on any failure.
+
+    Avoids ``is_file()`` which can return ``False`` under SELinux `:Z`
+    relabeling (rootless podman container files may have a different MCS
+    label after the container exits).
+    """
+    try:
+        text = path.read_text(encoding="utf-8")
+        data = json.loads(text)
+        return data if isinstance(data, dict) else None
+    except (OSError, json.JSONDecodeError, ValueError):
+        return None
+
+
 def _expect_mapping(value: object, *, context: str) -> dict:
     """Validate that *value* is a dict, raising ``ValueError`` if not."""
     if not isinstance(value, dict):
@@ -34,12 +49,11 @@ def extract_claude_oauth(base_dir: Path) -> dict:
     authenticated with an API key instead, ``config.json`` contains
     ``{"api_key": "..."}``.  Both paths are checked.
     """
-    # Try OAuth first (.credentials.json)
+    # Try OAuth first (.credentials.json) — use _try_read_json to avoid
+    # is_file() failures under SELinux :Z relabeling in rootless podman.
     cred_file = base_dir / ".credentials.json"
-    if cred_file.is_file():
-        data = _expect_mapping(
-            json.loads(cred_file.read_text(encoding="utf-8")), context=str(cred_file)
-        )
+    data = _try_read_json(cred_file)
+    if data is not None:
         oauth = _expect_mapping(data.get("claudeAiOauth", {}), context=f"{cred_file}:claudeAiOauth")
         token_data = _expect_mapping(oauth.get("token", {}), context=f"{cred_file}:token")
         access_token = token_data.get("accessToken")
@@ -53,11 +67,9 @@ def extract_claude_oauth(base_dir: Path) -> dict:
 
     # Fall back to API key (config.json)
     config_file = base_dir / "config.json"
-    if config_file.is_file():
-        data = _expect_mapping(
-            json.loads(config_file.read_text(encoding="utf-8")), context=str(config_file)
-        )
-        api_key = data.get("api_key")
+    config_data = _try_read_json(config_file)
+    if config_data is not None:
+        api_key = config_data.get("api_key")
         if api_key:
             return {"type": "api_key", "key": api_key}
 
@@ -70,12 +82,10 @@ def extract_claude_oauth(base_dir: Path) -> dict:
 def extract_codex_oauth(base_dir: Path) -> dict:
     """Extract Codex (OpenAI) OAuth tokens from ``auth.json``."""
     cred_file = base_dir / "auth.json"
-    if not cred_file.is_file():
-        raise ValueError(f"Codex credential file not found: {cred_file}")
+    data = _try_read_json(cred_file)
+    if data is None:
+        raise ValueError(f"Codex credential file not found or unreadable: {cred_file}")
 
-    data = _expect_mapping(
-        json.loads(cred_file.read_text(encoding="utf-8")), context=str(cred_file)
-    )
     tokens = _expect_mapping(data.get("tokens", {}), context=f"{cred_file}:tokens")
     access_token = tokens.get("access_token")
     if not access_token:
@@ -95,10 +105,12 @@ def extract_api_key_env(base_dir: Path, filename: str = ".env", var_name: str = 
     the first non-comment, non-empty value.
     """
     env_file = base_dir / filename
-    if not env_file.is_file():
-        raise ValueError(f"Env file not found: {env_file}")
+    try:
+        text = env_file.read_text(encoding="utf-8")
+    except OSError:
+        raise ValueError(f"Env file not found or unreadable: {env_file}")
 
-    for line in env_file.read_text(encoding="utf-8").splitlines():
+    for line in text.splitlines():
         line = line.strip()
         if not line or line.startswith("#"):
             continue
@@ -120,12 +132,9 @@ def extract_json_api_key(base_dir: Path, filename: str = "config.json") -> dict:
     Expects ``{"api_key": "..."}`` at the top level.
     """
     cred_file = base_dir / filename
-    if not cred_file.is_file():
-        raise ValueError(f"JSON config not found: {cred_file}")
-
-    data = _expect_mapping(
-        json.loads(cred_file.read_text(encoding="utf-8")), context=str(cred_file)
-    )
+    data = _try_read_json(cred_file)
+    if data is None:
+        raise ValueError(f"JSON config not found or unreadable: {cred_file}")
     key = data.get("api_key")
     if not key:
         raise ValueError(f"No api_key field in {cred_file}")
@@ -139,13 +148,13 @@ def extract_gh_token(base_dir: Path) -> dict:
     The gh CLI stores tokens per host under ``github.com.oauth_token``.
     """
     hosts_file = base_dir / "hosts.yml"
-    if not hosts_file.is_file():
-        raise ValueError(f"GitHub hosts file not found: {hosts_file}")
-
     from ruamel.yaml import YAML
 
     yaml = YAML(typ="safe")
-    data = yaml.load(hosts_file)
+    try:
+        data = yaml.load(hosts_file)
+    except OSError:
+        raise ValueError(f"GitHub hosts file not found or unreadable: {hosts_file}")
     if not isinstance(data, dict):
         raise ValueError(f"Unexpected hosts.yml format: {type(data)}")
 
@@ -167,13 +176,13 @@ def extract_glab_token(base_dir: Path) -> dict:
     The glab CLI stores tokens per host under ``hosts.<host>.token``.
     """
     config_file = base_dir / "config.yml"
-    if not config_file.is_file():
-        raise ValueError(f"GitLab config not found: {config_file}")
-
     from ruamel.yaml import YAML
 
     yaml = YAML(typ="safe")
-    data = yaml.load(config_file)
+    try:
+        data = yaml.load(config_file)
+    except OSError:
+        raise ValueError(f"GitLab config not found or unreadable: {config_file}")
     if not isinstance(data, dict):
         raise ValueError(f"Unexpected config.yml format: {type(data)}")
 
