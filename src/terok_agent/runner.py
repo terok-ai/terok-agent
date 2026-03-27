@@ -17,6 +17,7 @@ Gate is on by default (safe-by-default egress control).
 
 from __future__ import annotations
 
+import logging
 import shlex
 import tempfile
 import uuid
@@ -29,6 +30,8 @@ if TYPE_CHECKING:
     from terok_sandbox import LifecycleHooks, Sandbox
 
     from .registry import AgentRegistry
+
+_logger = logging.getLogger(__name__)
 
 
 def _generate_task_id() -> str:
@@ -154,6 +157,53 @@ class AgentRunner:
         self.sandbox.ensure_gate()
         token = self.sandbox.create_token(repo_key, task_id)
         return self.sandbox.gate_url(gate_path, token)
+
+    def _credential_proxy_env_and_volumes(
+        self, task_id: str
+    ) -> tuple[dict[str, str], list[str]]:
+        """Inject phantom tokens and proxy socket mount if the proxy is running.
+
+        Unlike terok (which hard-fails when the proxy is down), the standalone
+        runner silently skips proxy integration — credentials may come from
+        shared config mounts instead.
+        """
+        from terok_sandbox import (
+            CredentialDB,
+            SandboxConfig,
+            is_proxy_running,
+            is_proxy_socket_active,
+        )
+
+        cfg = SandboxConfig()
+        if not (is_proxy_socket_active() or is_proxy_running(cfg)):
+            return {}, []
+
+        db = CredentialDB(cfg.proxy_db_path)
+        try:
+            credential_set = "default"
+            phantom_token = db.create_proxy_token("standalone", task_id, credential_set)
+            stored_providers = set(db.list_credentials(credential_set))
+        finally:
+            db.close()
+
+        if not stored_providers:
+            return {}, []
+
+        env: dict[str, str] = {}
+        volumes = [f"{cfg.proxy_socket_path}:/run/terok/credential-proxy.sock:z"]
+
+        for name, route in self.registry.proxy_routes.items():
+            if name not in stored_providers:
+                continue
+            for env_var in route.phantom_env:
+                env[env_var] = phantom_token
+            if route.base_url_env:
+                env[route.base_url_env] = (
+                    f"http+unix:///run/terok/credential-proxy.sock/{route.route_prefix}"
+                )
+
+        _logger.debug("Credential proxy: injected %d env vars for %s", len(env), stored_providers)
+        return env, volumes
 
     def _base_env(self, task_id: str, provider_name: str) -> dict[str, str]:
         """Assemble the base environment variables for a container."""
@@ -435,6 +485,11 @@ class AgentRunner:
 
         # Shared auth mounts (derived from registry)
         volumes += self._shared_mounts(envs_dir)
+
+        # Credential proxy: inject phantom tokens and base URL overrides
+        proxy_env, proxy_volumes = self._credential_proxy_env_and_volumes(task_id)
+        env.update(proxy_env)
+        volumes += proxy_volumes
 
         # Agent config mount
         volumes.append(f"{agent_config_dir}:/home/dev/.terok:Z")
