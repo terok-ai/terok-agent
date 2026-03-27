@@ -512,9 +512,20 @@ def ensure_proxy_routes() -> Path:
 
     cfg = SandboxConfig()
     path = cfg.proxy_routes_path
+    import os
+    import tempfile
+
     path.parent.mkdir(parents=True, exist_ok=True)
     content = get_registry().generate_routes_json() + "\n"
-    tmp = path.with_suffix(".tmp")
-    tmp.write_text(content, encoding="utf-8")
-    tmp.replace(path)
+    fd, tmp_name = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
+    tmp = Path(tmp_name)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(content)
+            f.flush()
+            os.fsync(f.fileno())
+        tmp.replace(path)
+    except BaseException:
+        tmp.unlink(missing_ok=True)
+        raise
     return path
