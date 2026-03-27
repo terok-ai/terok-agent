@@ -100,6 +100,7 @@ class TestEnsureProxyRoutes:
 
         path = ensure_proxy_routes()
 
+        assert path == mock_cfg.proxy_routes_path
         assert path.is_file()
         routes = json.loads(path.read_text())
         # Should have at least claude route from the YAML registry

@@ -513,5 +513,8 @@ def ensure_proxy_routes() -> Path:
     cfg = SandboxConfig()
     path = cfg.proxy_routes_path
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(get_registry().generate_routes_json() + "\n")
+    content = get_registry().generate_routes_json() + "\n"
+    tmp = path.with_suffix(".tmp")
+    tmp.write_text(content, encoding="utf-8")
+    tmp.replace(path)
     return path
