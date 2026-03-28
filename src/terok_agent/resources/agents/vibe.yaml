@@ -40,7 +40,7 @@ credential_proxy:
     file: config.toml
     toml_table: providers
     toml_match: {name: mistral}
-    toml_set: {api_base: "{proxy_url}"}
+    toml_set: {api_base: "{proxy_url}/v1"}
 
 auth:
   host_dir: _vibe-config
