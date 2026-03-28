@@ -150,12 +150,56 @@ class TestScanLeakedCredentials:
 
         assert scan_leaked_credentials(tmp_path) == []
 
-    def test_skips_providers_without_credential_file(self, tmp_path) -> None:
-        """Providers with no credential_file in proxy route are skipped."""
+    def test_skips_providers_without_credential_file(self, tmp_path, monkeypatch) -> None:
+        """Providers whose proxy route has no credential_file are skipped."""
+        from unittest.mock import MagicMock
+
         from terok_agent.proxy_commands import scan_leaked_credentials
 
-        # copilot has no proxy route at all, so the scan just returns empty
+        # Mock a registry with a provider that has a proxy route but no credential_file
+        mock_registry = MagicMock()
+        mock_route = MagicMock()
+        mock_route.credential_file = ""
+        mock_registry.proxy_routes = {"fake-provider": mock_route}
+        mock_registry.auth_providers = {"fake-provider": MagicMock(host_dir_name="_fake")}
+        monkeypatch.setattr("terok_agent.registry.get_registry", lambda: mock_registry)
+
         assert scan_leaked_credentials(tmp_path) == []
+
+    def test_clean_removes_leaked_files(self, tmp_path) -> None:
+        """The clean handler removes detected credential files."""
+        from unittest.mock import patch
+
+        from terok_agent import get_registry
+        from terok_agent.proxy_commands import _handle_clean
+
+        registry = get_registry()
+        auth = registry.auth_providers["claude"]
+        route = registry.proxy_routes["claude"]
+
+        cred_dir = tmp_path / auth.host_dir_name
+        cred_dir.mkdir()
+        cred_file = cred_dir / route.credential_file
+        cred_file.write_text('{"secret": true}')
+
+        with patch("terok_sandbox.SandboxConfig") as mock_cfg_cls:
+            mock_cfg_cls.return_value.effective_envs_dir = tmp_path
+            _handle_clean()
+
+        assert not cred_file.exists()
+
+    def test_clean_no_files(self, capsys) -> None:
+        """Clean reports nothing when no leaked files found."""
+        from pathlib import Path
+        from unittest.mock import patch
+
+        from terok_agent.proxy_commands import _handle_clean
+
+        with patch("terok_sandbox.SandboxConfig") as mock_cfg_cls:
+            mock_cfg_cls.return_value.effective_envs_dir = Path("/nonexistent")
+            _handle_clean()
+
+        assert "No leaked" in capsys.readouterr().out
 
 
 class TestEnsureProxyRoutes:
