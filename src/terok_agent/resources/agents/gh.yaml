@@ -12,6 +12,11 @@ credential_proxy:
   auth_prefix: "token "
   credential_type: oauth_token
   credential_file: hosts.yml
+  phantom_env:
+    GH_TOKEN: true
+  shared_config_patch:
+    file: config.yml
+    yaml_set: {http_unix_socket: "/tmp/terok-gh-proxy.sock"}
 
 auth:
   host_dir: _gh-config

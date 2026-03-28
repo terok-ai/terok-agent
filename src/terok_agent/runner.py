@@ -221,6 +221,14 @@ class AgentRunner:
             if provider and provider.opencode_config:
                 oc_base_key = f"TEROK_OC_{name.upper()}_BASE_URL"
                 env[oc_base_key] = f"{proxy_base}/v1"
+            # glab: redirect API to proxy via env vars
+            if name == "glab":
+                env["GITLAB_API_HOST"] = f"host.containers.internal:{port}"
+                env["API_PROTOCOL"] = "http"
+
+        # Signal for init script to start socat bridges
+        if routed:
+            env["TEROK_PROXY_PORT"] = str(port)
 
         _logger.debug("Credential proxy: injected %d env vars for %s", len(env), stored_providers)
         return env

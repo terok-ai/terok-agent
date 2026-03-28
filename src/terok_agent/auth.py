@@ -284,7 +284,18 @@ def _write_proxy_config(provider_name: str) -> None:
     patch = route.shared_config_patch
     shared_dir = cfg.effective_envs_dir / auth_info.host_dir_name
     config_path = shared_dir / patch["file"]
+    shared_dir.mkdir(parents=True, exist_ok=True)
 
+    if "yaml_set" in patch:
+        _apply_yaml_patch(config_path, patch, proxy_url)
+    elif "toml_table" in patch:
+        _apply_toml_patch(config_path, patch, proxy_url)
+
+    print(f"Proxy config written to {config_path}")
+
+
+def _apply_toml_patch(config_path: Path, patch: dict, proxy_url: str) -> None:
+    """Patch a TOML array-of-tables entry."""
     try:
         import tomllib
 
@@ -292,10 +303,9 @@ def _write_proxy_config(provider_name: str) -> None:
     except Exception:
         existing = {}
 
-    # Patch a TOML array-of-tables: find matching entry or create one
     table_key = patch["toml_table"]
     match_criteria = patch["toml_match"]
-    values_to_set = {
+    values = {
         k: v.replace("{proxy_url}", proxy_url) if isinstance(v, str) else v
         for k, v in patch["toml_set"].items()
     }
@@ -306,16 +316,33 @@ def _write_proxy_config(provider_name: str) -> None:
         None,
     )
     if target:
-        target.update(values_to_set)
+        target.update(values)
     else:
-        entries.append({**match_criteria, **values_to_set})
+        entries.append({**match_criteria, **values})
         existing[table_key] = entries
 
     import tomli_w
 
-    shared_dir.mkdir(parents=True, exist_ok=True)
     config_path.write_bytes(tomli_w.dumps(existing).encode())
-    print(f"Proxy config written to {config_path}")
+
+
+def _apply_yaml_patch(config_path: Path, patch: dict, proxy_url: str) -> None:
+    """Set top-level keys in a YAML config file."""
+    from ruamel.yaml import YAML
+
+    yaml = YAML()
+    yaml.preserve_quotes = True
+    try:
+        existing = yaml.load(config_path) if config_path.is_file() else {}
+    except Exception:
+        existing = {}
+    if not isinstance(existing, dict):
+        existing = {}
+
+    for k, v in patch["yaml_set"].items():
+        existing[k] = v.replace("{proxy_url}", proxy_url) if isinstance(v, str) else v
+
+    yaml.dump(existing, config_path)
 
 
 def store_api_key(

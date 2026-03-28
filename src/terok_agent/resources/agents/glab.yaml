@@ -7,11 +7,13 @@ binary: glab
 
 credential_proxy:
   route_prefix: gl
-  upstream: https://gitlab.com/api/v4
+  upstream: https://gitlab.com
   auth_header: PRIVATE-TOKEN
   auth_prefix: ""
   credential_type: pat
   credential_file: config.yml
+  phantom_env:
+    GITLAB_TOKEN: true
 
 auth:
   host_dir: _glab-config

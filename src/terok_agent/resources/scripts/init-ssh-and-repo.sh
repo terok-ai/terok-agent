@@ -320,6 +320,14 @@ if [[ "${TEROK_UNRESTRICTED:-}" == "1" ]]; then
   fi
 fi
 
+# Credential proxy: start socat bridges for tools that need Unix sockets.
+# gh routes all API traffic through http_unix_socket (set in config.yml).
+# The socat bridge pipes that socket to the TCP proxy on the host.
+if [[ -n "${TEROK_PROXY_PORT:-}" ]] && [[ -n "${GH_TOKEN:-}" ]] && command -v socat >/dev/null 2>&1; then
+  socat UNIX-LISTEN:/tmp/terok-gh-proxy.sock,fork TCP:host.containers.internal:"${TEROK_PROXY_PORT}" &
+  echo ">> gh proxy bridge started (socat PID: $!)"
+fi
+
 # Signal readiness for host tools that watch initial logs
 echo ">> init complete"
 exec bash
