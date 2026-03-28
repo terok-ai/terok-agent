@@ -170,22 +170,21 @@ class AgentRunner:
         """
         from terok_sandbox import (
             CredentialDB,
-            SandboxConfig,
             get_proxy_port,
             is_proxy_running,
             is_proxy_socket_active,
         )
 
-        cfg = SandboxConfig()
+        cfg = self.sandbox.config
         if not (is_proxy_socket_active() or is_proxy_running(cfg)):
             return {}
 
+        proxy_routes = self.registry.proxy_routes
         db = CredentialDB(cfg.proxy_db_path)
         try:
             credential_set = "default"
             stored_providers = set(db.list_credentials(credential_set))
-            # Only create a phantom token if there are routed providers to inject
-            routed = stored_providers & self.registry.proxy_routes.keys()
+            routed = stored_providers & proxy_routes.keys()
             if not routed:
                 return {}
             phantom_token = db.create_proxy_token("standalone", task_id, credential_set)
@@ -195,7 +194,7 @@ class AgentRunner:
         port = get_proxy_port(cfg)
         env: dict[str, str] = {}
 
-        for name, route in self.registry.proxy_routes.items():
+        for name, route in proxy_routes.items():
             if name not in routed:
                 continue
             for env_var in route.phantom_env:

@@ -304,6 +304,79 @@ class TestGateIntegration:
         assert spec.env.get("CODE_REPO") == "git@github.com:user/repo.git"
 
 
+class TestCredentialProxyEnv:
+    """Verify _credential_proxy_env integration."""
+
+    def test_proxy_not_running_returns_empty(self) -> None:
+        """When proxy is not running, returns empty dict."""
+        sandbox = _mock_sandbox()
+        runner = AgentRunner(sandbox=sandbox)
+
+        with (
+            patch("terok_sandbox.credential_proxy_lifecycle.is_socket_active", return_value=False),
+            patch("terok_sandbox.credential_proxy_lifecycle.is_daemon_running", return_value=False),
+        ):
+            env = runner._credential_proxy_env("task-1")
+
+        assert env == {}
+
+    def test_proxy_running_injects_phantom_tokens(self, tmp_path: Path) -> None:
+        """When proxy runs and credentials exist, injects phantom env vars."""
+        from terok_sandbox import CredentialDB
+
+        db_path = tmp_path / "proxy" / "credentials.db"
+        db = CredentialDB(db_path)
+        db.store_credential("default", "claude", {"type": "api_key", "key": "sk-test"})
+        db.close()
+
+        sandbox = _mock_sandbox()
+        sandbox.config = sandbox.config.__class__(
+            proxy_port=18731,
+            runtime_dir=tmp_path,
+            state_dir=tmp_path,
+        )
+        # Point proxy_db_path to our test DB
+        object.__setattr__(sandbox.config, "proxy_db_path", db_path)
+
+        runner = AgentRunner(sandbox=sandbox)
+
+        with (
+            patch("terok_sandbox.credential_proxy_lifecycle.is_socket_active", return_value=False),
+            patch("terok_sandbox.credential_proxy_lifecycle.is_daemon_running", return_value=True),
+        ):
+            env = runner._credential_proxy_env("task-1")
+
+        assert "ANTHROPIC_API_KEY" in env
+        assert len(env["ANTHROPIC_API_KEY"]) == 32
+        assert "ANTHROPIC_BASE_URL" in env
+        assert "host.containers.internal:18731/claude" in env["ANTHROPIC_BASE_URL"]
+
+    def test_no_routed_providers_returns_empty(self, tmp_path: Path) -> None:
+        """When credentials exist but none map to proxy routes, returns empty."""
+        from terok_sandbox import CredentialDB, SandboxConfig
+
+        db_path = tmp_path / "proxy" / "credentials.db"
+        db = CredentialDB(db_path)
+        # Store a credential for a provider with no proxy route
+        db.store_credential("default", "nonexistent-provider", {"type": "api_key", "key": "k"})
+        db.close()
+
+        cfg = SandboxConfig(runtime_dir=tmp_path, state_dir=tmp_path)
+        sandbox = _mock_sandbox()
+        sandbox.config = cfg
+        object.__setattr__(sandbox.config, "proxy_db_path", db_path)
+
+        runner = AgentRunner(sandbox=sandbox)
+
+        with (
+            patch("terok_sandbox.credential_proxy_lifecycle.is_socket_active", return_value=False),
+            patch("terok_sandbox.credential_proxy_lifecycle.is_daemon_running", return_value=True),
+        ):
+            env = runner._credential_proxy_env("task-1")
+
+        assert env == {}
+
+
 class TestCommandRegistry:
     """Verify the command registry is well-formed."""
 
