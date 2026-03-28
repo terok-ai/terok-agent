@@ -2245,8 +2245,8 @@ terok-shield = {url = "https://github.com/terok-ai/terok-shield/releases/downloa
 [package.source]
 type = "git"
 url = "https://github.com/sliwowitz/terok-sandbox.git"
-reference = "f1b6e5fd9361276e27719fbeff1879e4fd174b46"
-resolved_reference = "f1b6e5fd9361276e27719fbeff1879e4fd174b46"
+reference = "a672d15"
+resolved_reference = "a672d150cfba37fe27ef8eb0868f432c16217e5a"
 
 [[package]]
 name = "terok-shield"
@@ -2631,4 +2631,4 @@ propcache = ">=0.2.1"
 [metadata]
 lock-version = "2.1"
 python-versions = ">=3.12,<4.0"
-content-hash = "1f6db0dcb637a8e81dfcc09774e8bc57a06c2fff189fa5a487c735b3bab0ab19"
+content-hash = "32b1043543fa6244bab981f3e8e8a748b86e49198debbcf4e5b8989c31c11643"
