@@ -313,8 +313,8 @@ class TestCredentialProxyEnv:
         runner = AgentRunner(sandbox=sandbox)
 
         with (
-            patch("terok_sandbox.credential_proxy_lifecycle.is_socket_active", return_value=False),
-            patch("terok_sandbox.credential_proxy_lifecycle.is_daemon_running", return_value=False),
+            patch("terok_sandbox.is_proxy_socket_active", return_value=False),
+            patch("terok_sandbox.is_proxy_running", return_value=False),
         ):
             env = runner._credential_proxy_env("task-1")
 
@@ -338,8 +338,8 @@ class TestCredentialProxyEnv:
         runner = AgentRunner(sandbox=sandbox)
 
         with (
-            patch("terok_sandbox.credential_proxy_lifecycle.is_socket_active", return_value=False),
-            patch("terok_sandbox.credential_proxy_lifecycle.is_daemon_running", return_value=True),
+            patch("terok_sandbox.is_proxy_socket_active", return_value=False),
+            patch("terok_sandbox.is_proxy_running", return_value=True),
         ):
             env = runner._credential_proxy_env("task-1")
 
@@ -364,8 +364,8 @@ class TestCredentialProxyEnv:
         runner = AgentRunner(sandbox=sandbox)
 
         with (
-            patch("terok_sandbox.credential_proxy_lifecycle.is_socket_active", return_value=False),
-            patch("terok_sandbox.credential_proxy_lifecycle.is_daemon_running", return_value=True),
+            patch("terok_sandbox.is_proxy_socket_active", return_value=False),
+            patch("terok_sandbox.is_proxy_running", return_value=True),
         ):
             env = runner._credential_proxy_env("task-1")
 
