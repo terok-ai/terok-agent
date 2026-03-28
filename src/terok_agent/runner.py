@@ -215,7 +215,7 @@ class AgentRunner:
             for env_var in route.phantom_env:
                 env[env_var] = tokens[name]
             if route.base_url_env:
-                env[route.base_url_env] = f"{proxy_base}/{route.route_prefix}"
+                env[route.base_url_env] = proxy_base
             # Override OpenCode base URL for proxied providers
             provider = self.registry.providers.get(name)
             if provider and provider.opencode_config:
