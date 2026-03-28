@@ -253,6 +253,99 @@ def _capture_credentials(provider_name: str, auth_dir: Path, credential_set: str
     except Exception as exc:
         print(f"\nWarning: failed to store credentials: {exc}")
         print("The auth flow completed but credentials were not saved to the proxy DB.")
+        return
+
+    _write_proxy_config(provider_name)
+
+
+def _write_proxy_config(provider_name: str) -> None:
+    """Write proxy base URL into the provider's shared config dir if needed.
+
+    Providers like Vibe don't have a ``base_url_env`` — the only way to
+    redirect API traffic through the proxy is to patch the shared config
+    file (e.g. ``~/.vibe/config.toml``).  This is safe because the proxy
+    URL is infrastructure config, not a secret.
+    """
+    from .registry import get_registry
+
+    route = get_registry().proxy_routes.get(provider_name)
+    if not route or route.base_url_env:
+        return  # has env var override or no proxy route — nothing to do
+
+    auth_info = AUTH_PROVIDERS.get(provider_name)
+    if not auth_info:
+        return
+
+    from terok_sandbox import SandboxConfig, get_proxy_port
+
+    cfg = SandboxConfig()
+    port = get_proxy_port(cfg)
+    proxy_base = f"http://host.containers.internal:{port}/{route.route_prefix}/v1"
+
+    # Provider-specific config writers
+    if provider_name == "vibe":
+        _write_vibe_proxy_config(cfg, auth_info, proxy_base)
+
+
+def _write_vibe_proxy_config(cfg: object, auth_info: AuthProvider, proxy_base: str) -> None:
+    """Patch ``~/.vibe/config.toml`` to route API calls through the proxy."""
+    shared_dir = cfg.effective_envs_dir / auth_info.host_dir_name
+    config_path = shared_dir / "config.toml"
+
+    try:
+        import tomllib
+
+        existing = tomllib.loads(config_path.read_text()) if config_path.is_file() else {}
+    except Exception:
+        existing = {}
+
+    # Find or create the mistral provider entry
+    providers = existing.get("providers", [])
+    mistral_entry = next((p for p in providers if p.get("name") == "mistral"), None)
+    if mistral_entry:
+        mistral_entry["api_base"] = proxy_base
+    else:
+        providers.append(
+            {
+                "name": "mistral",
+                "api_base": proxy_base,
+                "api_key_env_var": "MISTRAL_API_KEY",
+                "backend": "mistral",
+            }
+        )
+        existing["providers"] = providers
+
+    # Write back as TOML
+    shared_dir.mkdir(parents=True, exist_ok=True)
+    _write_toml(config_path, existing)
+    print(f"Proxy base URL written to {config_path}")
+
+
+def _write_toml(path: Path, data: dict) -> None:
+    """Write a dict as TOML (minimal writer for flat + array-of-tables)."""
+    lines: list[str] = []
+    for k, v in data.items():
+        if k == "providers":
+            continue  # handled below as array-of-tables
+        if isinstance(v, str):
+            lines.append(f'{k} = "{v}"')
+        elif isinstance(v, bool):
+            lines.append(f"{k} = {'true' if v else 'false'}")
+        elif isinstance(v, (int, float)):
+            lines.append(f"{k} = {v}")
+
+    for provider in data.get("providers", []):
+        lines.append("")
+        lines.append("[[providers]]")
+        for pk, pv in provider.items():
+            if isinstance(pv, str):
+                lines.append(f'{pk} = "{pv}"')
+            elif isinstance(pv, bool):
+                lines.append(f"{pk} = {'true' if pv else 'false'}")
+            elif isinstance(pv, (int, float)):
+                lines.append(f"{pk} = {pv}")
+
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
 def store_api_key(
@@ -274,6 +367,8 @@ def store_api_key(
         print(f"API key stored for {provider} (set: {credential_set})")
     finally:
         db.close()
+
+    _write_proxy_config(provider)
 
 
 def _prompt_api_key(info: AuthProvider) -> str:
