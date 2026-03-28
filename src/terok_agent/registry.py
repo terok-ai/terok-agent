@@ -271,6 +271,16 @@ class CredentialProxyRoute:
     """OAuth refresh config: ``{token_url, client_id, scope}``."""
 
 
+def _validated_oauth_refresh(name: str, raw: dict | None) -> dict | None:
+    """Validate ``oauth_refresh`` section and return it, or ``None``."""
+    if raw is None:
+        return None
+    for key in ("token_url", "client_id"):
+        if key not in raw:
+            raise ValueError(f"Agent {name!r}: oauth_refresh missing required key {key!r}")
+    return raw
+
+
 def _to_proxy_route(name: str, data: dict) -> CredentialProxyRoute | None:
     """Parse the ``credential_proxy:`` YAML section into a route config."""
     cp = data.get("credential_proxy")
@@ -294,7 +304,7 @@ def _to_proxy_route(name: str, data: dict) -> CredentialProxyRoute | None:
         phantom_env=cp.get("phantom_env", {}),
         base_url_env=cp.get("base_url_env", ""),
         shared_config_patch=cp.get("shared_config_patch"),
-        oauth_refresh=cp.get("oauth_refresh"),
+        oauth_refresh=_validated_oauth_refresh(name, cp.get("oauth_refresh")),
     )
 
 

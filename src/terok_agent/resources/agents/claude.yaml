@@ -40,6 +40,9 @@ credential_proxy:
   auth_prefix: ""
   credential_type: oauth
   credential_file: .credentials.json
+  # OAuth token refresh — endpoint and client_id extracted from Claude Code
+  # v2.1.86 (cli.js bundle). Scopes match the refresh grant in that version.
+  # These are undocumented internals and may change with Claude Code releases.
   oauth_refresh:
     token_url: https://platform.claude.com/v1/oauth/token
     client_id: 9d1c250a-e61b-44d9-88ed-5944d1962f5e
