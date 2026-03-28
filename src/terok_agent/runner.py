@@ -207,6 +207,40 @@ class AgentRunner:
         _logger.debug("Credential proxy: injected %d env vars for %s", len(env), stored_providers)
         return env
 
+    @staticmethod
+    def _stream_headless(cname: str, timeout: float) -> None:
+        """Stream container logs to stdout and print exit code when done."""
+        import subprocess
+        import sys
+
+        try:
+            proc = subprocess.Popen(
+                ["podman", "logs", "-f", cname],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+            )
+            assert proc.stdout is not None
+            for line in proc.stdout:
+                sys.stdout.buffer.write(line)
+                sys.stdout.buffer.flush()
+            proc.wait(timeout=timeout)
+        except subprocess.TimeoutExpired:
+            proc.terminate()
+            print("Agent timed out", file=sys.stderr)
+        except (FileNotFoundError, OSError):
+            pass
+
+        # Retrieve exit code from the container itself
+        try:
+            result = subprocess.run(["podman", "wait", cname], capture_output=True, timeout=10)
+            exit_code = int(result.stdout.decode().strip()) if result.stdout else 1
+        except (subprocess.TimeoutExpired, ValueError, FileNotFoundError):
+            exit_code = 1
+
+        if exit_code != 0:
+            print(f"Agent exited with code {exit_code}")
+        print(f"Container: {cname}")
+
     def _base_env(self, task_id: str, provider_name: str) -> dict[str, str]:
         """Assemble the base environment variables for a container."""
         env: dict[str, str] = {
@@ -536,9 +570,7 @@ class AgentRunner:
 
         # Follow output if requested
         if follow and mode == "headless":
-            exit_code = self.sandbox.wait_for_exit(cname, timeout=float(timeout + 60))
-            if exit_code != 0:
-                print(f"Agent exited with code {exit_code}")
+            self._stream_headless(cname, timeout=float(timeout + 60))
         elif mode == "interactive":
             from terok_sandbox import READY_MARKER
 
