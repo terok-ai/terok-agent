@@ -385,15 +385,11 @@ class AgentRegistry:
                     f"providers {existing!r} and {route.provider!r}"
                 )
             prefix_owners[route.route_prefix] = route.provider
-            entry = {
+            routes[route.provider] = {
                 "upstream": route.upstream,
                 "auth_header": route.auth_header,
                 "auth_prefix": route.auth_prefix,
             }
-            # Key by both prefix (legacy path routing) and provider name (token routing)
-            routes[route.route_prefix] = entry
-            if route.provider != route.route_prefix:
-                routes[route.provider] = entry
         return json.dumps(routes, indent=2)
 
     def collect_all_auto_approve_env(self) -> dict[str, str]:
