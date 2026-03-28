@@ -216,6 +216,11 @@ class AgentRunner:
                 env[env_var] = tokens[name]
             if route.base_url_env:
                 env[route.base_url_env] = f"{proxy_base}/{route.route_prefix}"
+            # Override OpenCode base URL for proxied providers
+            provider = self.registry.providers.get(name)
+            if provider and provider.opencode_config:
+                oc_base_key = f"TEROK_OC_{name.upper()}_BASE_URL"
+                env[oc_base_key] = f"{proxy_base}/v1"
 
         _logger.debug("Credential proxy: injected %d env vars for %s", len(env), stored_providers)
         return env
