@@ -14,6 +14,7 @@ import argparse
 from importlib.metadata import PackageNotFoundError, version as _meta_version
 
 from .commands import COMMANDS, ArgDef, CommandDef
+from .proxy_commands import PROXY_COMMANDS
 
 try:
     __version__ = _meta_version("terok-agent")
@@ -68,9 +69,18 @@ def main() -> None:
     for cmd in COMMANDS:
         _wire_command(sub, cmd)
 
+    # -- proxy --
+    proxy_p = sub.add_parser("proxy", help="Credential proxy management")
+    proxy_sub = proxy_p.add_subparsers()
+    for cmd in PROXY_COMMANDS:
+        _wire_command(proxy_sub, cmd)
+    proxy_p.set_defaults(_group_help=proxy_p)
+
     args = parser.parse_args()
     if hasattr(args, "_cmd"):
         _dispatch(args)
+    elif hasattr(args, "_group_help"):
+        args._group_help.print_help()
     else:
         parser.print_help()
         raise SystemExit(1)

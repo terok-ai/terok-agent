@@ -78,6 +78,7 @@ from .config_stack import ConfigScope, ConfigStack
 
 # -- Credential proxy ----------------------------------------------------------
 from .credential_extractors import extract_credential
+from .proxy_commands import PROXY_COMMANDS
 
 # -- Provider registry ---------------------------------------------------------
 from .headless_providers import (
@@ -166,6 +167,7 @@ __all__ = [
     "get_registry",
     # Command registry
     "AGENT_COMMANDS",
+    "PROXY_COMMANDS",
     "CommandDef",
     # Runner facade
     "AgentRunner",
