@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: 2026 Jiri Vyskocil
 # SPDX-License-Identifier: Apache-2.0
 
-"""YAML-driven agent and tool registry.
+"""YAML-driven agent and tool roster.
 
 Loads per-agent definition files from bundled package resources and optional
 user extensions, deserializes them into the existing dataclass types, and
@@ -218,7 +218,7 @@ def _derive_opencode_auth(name: str, data: dict) -> AuthProvider | None:
 
 @dataclass(frozen=True)
 class MountDef:
-    """A shared directory mount derived from the agent registry."""
+    """A shared directory mount derived from the agent roster."""
 
     host_dir: str
     """Directory name under ``envs_base_dir`` (e.g. ``"_codex-config"``)."""
@@ -309,8 +309,8 @@ def _to_proxy_route(name: str, data: dict) -> CredentialProxyRoute | None:
 
 
 @dataclass(frozen=True)
-class AgentRegistry:
-    """Loaded registry of agents and tools from YAML definitions.
+class AgentRoster:
+    """Loaded roster of agents and tools from YAML definitions.
 
     Provides the same query API as the legacy hardcoded dicts.
     """
@@ -431,8 +431,8 @@ class AgentRegistry:
         return env
 
 
-def load_registry() -> AgentRegistry:
-    """Load the agent registry from bundled YAML + user overrides.
+def load_roster() -> AgentRoster:
+    """Load the agent roster from bundled YAML + user overrides.
 
     Bundled agents in ``resources/agents/*.yaml`` are loaded first, then
     user files in ``~/.config/terok-agent/agents/*.yaml`` are deep-merged
@@ -504,7 +504,7 @@ def load_registry() -> AgentRegistry:
         if proxy_route is not None:
             proxy_routes[name] = proxy_route
 
-    return AgentRegistry(
+    return AgentRoster(
         _providers=providers,
         _auth_providers=auth_providers,
         _proxy_routes=proxy_routes,
@@ -515,13 +515,13 @@ def load_registry() -> AgentRegistry:
 
 
 @lru_cache(maxsize=1)
-def get_registry() -> AgentRegistry:
-    """Return the singleton registry instance (loaded once, cached)."""
-    return load_registry()
+def get_roster() -> AgentRoster:
+    """Return the singleton roster instance (loaded once, cached)."""
+    return load_roster()
 
 
 def ensure_proxy_routes() -> Path:
-    """Generate ``routes.json`` from the YAML registry and write it to disk.
+    """Generate ``routes.json`` from the YAML roster and write it to disk.
 
     The routes file is written to the path configured in
     :class:`~terok_sandbox.SandboxConfig` (typically
@@ -537,7 +537,7 @@ def ensure_proxy_routes() -> Path:
     import tempfile
 
     path.parent.mkdir(parents=True, exist_ok=True)
-    content = get_registry().generate_routes_json() + "\n"
+    content = get_roster().generate_routes_json() + "\n"
     fd, tmp_name = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
     tmp = Path(tmp_name)
     try:

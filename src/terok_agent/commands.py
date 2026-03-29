@@ -50,10 +50,10 @@ def _handle_agents(*, show_all: bool = False) -> None:
     """List registered agents."""
     import sys
 
-    from .registry import _load_bundled_agents, _load_user_agents, get_registry
+    from .roster import _load_bundled_agents, _load_user_agents, get_roster
 
-    reg = get_registry()
-    names = reg.all_names if show_all else reg.agent_names
+    roster = get_roster()
+    names = roster.all_names if show_all else roster.agent_names
 
     if not names:
         print("No agents registered.", file=sys.stderr)
@@ -64,8 +64,8 @@ def _handle_agents(*, show_all: bool = False) -> None:
 
     rows: list[tuple[str, str, str]] = []
     for name in sorted(names):
-        p = reg.providers.get(name)
-        auth = reg.auth_providers.get(name)
+        p = roster.providers.get(name)
+        auth = roster.auth_providers.get(name)
         label = p.label if p else (auth.label if auth else name)
         kind = raw.get(name, {}).get("kind", "native")
         rows.append((name, label, kind))

@@ -95,31 +95,31 @@ from .headless_providers import (
 # -- Instructions --------------------------------------------------------------
 from .instructions import bundled_default_instructions, resolve_instructions
 from .proxy_commands import PROXY_COMMANDS, scan_leaked_credentials
-from .registry import CredentialProxyRoute, ensure_proxy_routes, get_registry
+from .roster import CredentialProxyRoute, ensure_proxy_routes, get_roster
 
 # -- Runner facade -------------------------------------------------------------
 from .runner import AgentRunner
 
-# -- Bootstrap YAML registry into module-level dicts ---------------------------
+# -- Bootstrap YAML roster into module-level dicts ---------------------------
 # HEADLESS_PROVIDERS and AUTH_PROVIDERS are empty dicts populated here to avoid
-# circular imports (registry → auth/headless_providers → registry).
+# circular imports (roster → auth/headless_providers → roster).
 
 
-def _bootstrap_registry() -> None:
-    """Populate module-level provider dicts from the YAML registry."""
+def _bootstrap_roster() -> None:
+    """Populate module-level provider dicts from the YAML roster."""
     global PROVIDER_NAMES  # noqa: PLW0603 — tuple requires rebind
 
     import terok_agent.headless_providers as _hp
 
-    from .registry import get_registry
+    from .roster import get_roster
 
-    reg = get_registry()
-    HEADLESS_PROVIDERS.update(reg.providers)
-    AUTH_PROVIDERS.update(reg.auth_providers)
-    PROVIDER_NAMES = _hp.PROVIDER_NAMES = reg.agent_names
+    roster = get_roster()
+    HEADLESS_PROVIDERS.update(roster.providers)
+    AUTH_PROVIDERS.update(roster.auth_providers)
+    PROVIDER_NAMES = _hp.PROVIDER_NAMES = roster.agent_names
 
 
-_bootstrap_registry()
+_bootstrap_roster()
 
 __all__ = [
     "__version__",
@@ -163,8 +163,8 @@ __all__ = [
     "CredentialProxyRoute",
     "ensure_proxy_routes",
     "extract_credential",
-    # Registry
-    "get_registry",
+    # Roster
+    "get_roster",
     # Command registry
     "AGENT_COMMANDS",
     "PROXY_COMMANDS",

@@ -78,12 +78,12 @@ depends_on = [
 [[modules]]
 path = "terok_agent.proxy_config"
 depends_on = [
-    "terok_agent.registry",
+    "terok_agent.roster",
 ]
 
-# YAML agent registry — loads bundled + user agent definitions
+# YAML agent roster — loads bundled + user agent definitions
 [[modules]]
-path = "terok_agent.registry"
+path = "terok_agent.roster"
 depends_on = [
     "terok_agent._util",
     "terok_agent.auth",
@@ -109,14 +109,14 @@ depends_on = [
     "terok_agent.build",
     "terok_agent.headless_providers",
     "terok_agent.instructions",
-    "terok_agent.registry",
+    "terok_agent.roster",
 ]
 
 # Credential proxy CLI commands — wraps sandbox lifecycle + route generation
 [[modules]]
 path = "terok_agent.proxy_commands"
 depends_on = [
-    "terok_agent.registry",
+    "terok_agent.roster",
 ]
 
 # Command registry — defines all CLI commands
@@ -126,7 +126,7 @@ depends_on = [
     "terok_agent.auth",
     "terok_agent.build",
     "terok_agent.proxy_config",
-    "terok_agent.registry",
+    "terok_agent.roster",
     "terok_agent.runner",
 ]
 
@@ -138,7 +138,7 @@ depends_on = [
     "terok_agent.proxy_commands",
 ]
 
-# Package root — public API re-exports + registry bootstrap
+# Package root — public API re-exports + roster bootstrap
 [[modules]]
 path = "terok_agent"
 depends_on = [
@@ -152,6 +152,6 @@ depends_on = [
     "terok_agent.headless_providers",
     "terok_agent.instructions",
     "terok_agent.proxy_commands",
-    "terok_agent.registry",
+    "terok_agent.roster",
     "terok_agent.runner",
 ]

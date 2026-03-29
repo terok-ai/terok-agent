@@ -4,7 +4,7 @@
 """Credential proxy CLI commands for terok-agent.
 
 Wraps terok-sandbox proxy lifecycle with agent-level concerns: route
-generation from the YAML registry is performed before ``start`` and
+generation from the YAML roster is performed before ``start`` and
 ``install`` so the proxy always has up-to-date provider config.
 """
 
@@ -17,8 +17,8 @@ from terok_sandbox import CommandDef
 
 
 def _ensure_routes() -> Path:
-    """Generate routes.json from the YAML agent registry."""
-    from .registry import ensure_proxy_routes
+    """Generate routes.json from the YAML agent roster."""
+    from .roster import ensure_proxy_routes
 
     return ensure_proxy_routes()
 
@@ -54,14 +54,14 @@ def scan_leaked_credentials(envs_base: Path) -> list[tuple[str, Path]]:
     into containers.  This function checks each routed provider's mount for
     credential files that would leak real tokens alongside phantom ones.
     """
-    from .registry import get_registry
+    from .roster import get_roster
 
-    registry = get_registry()
+    roster = get_roster()
     leaked: list[tuple[str, Path]] = []
-    for name, route in registry.proxy_routes.items():
+    for name, route in roster.proxy_routes.items():
         if not route.credential_file:
             continue
-        auth = registry.auth_providers.get(name)
+        auth = roster.auth_providers.get(name)
         if not auth:
             continue
         try:
@@ -127,7 +127,7 @@ def _handle_uninstall() -> None:
 
 
 def _handle_routes() -> None:
-    """Regenerate routes.json from the YAML agent registry."""
+    """Regenerate routes.json from the YAML agent roster."""
     path = _ensure_routes()
     if path:
         print(f"Routes written to {path}")
@@ -167,7 +167,7 @@ PROXY_COMMANDS: tuple[CommandDef, ...] = (
     ),
     CommandDef(
         name="routes",
-        help="Regenerate routes.json from YAML registry",
+        help="Regenerate routes.json from YAML roster",
         handler=_handle_routes,
         group="proxy",
     ),

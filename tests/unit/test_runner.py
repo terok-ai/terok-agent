@@ -58,12 +58,12 @@ class TestAgentRunner:
         runner = AgentRunner(base_image="nvidia/cuda:12.4")
         assert runner._base_image == "nvidia/cuda:12.4"
 
-    def test_lazy_registry(self) -> None:
+    def test_lazy_roster(self) -> None:
         runner = AgentRunner()
-        reg = runner.registry
+        reg = runner.roster
         assert "claude" in reg.agent_names
 
-    def test_shared_mounts_from_registry(self, tmp_path: Path) -> None:
+    def test_shared_mounts_from_roster(self, tmp_path: Path) -> None:
         runner = AgentRunner()
         mounts = runner._shared_mounts(tmp_path)
         # Should have mounts for agents with auth (claude, codex, vibe, gh, glab, etc.)

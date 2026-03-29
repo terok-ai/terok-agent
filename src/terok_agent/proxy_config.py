@@ -3,7 +3,7 @@
 
 """Post-auth shared config patching for the credential proxy.
 
-Applies ``shared_config_patch`` from the YAML registry after authentication.
+Applies ``shared_config_patch`` from the YAML roster after authentication.
 Writes proxy URLs (not secrets) to provider config files so that agents
 route API traffic through the credential proxy.
 """
@@ -14,20 +14,20 @@ from pathlib import Path
 
 
 def write_proxy_config(provider_name: str) -> None:
-    """Apply ``shared_config_patch`` from the YAML registry after auth.
+    """Apply ``shared_config_patch`` from the YAML roster after auth.
 
     Patches a TOML or YAML config file in the provider's shared config dir
     to redirect API traffic through the credential proxy.  The patch spec
     is declared in the agent YAML — no provider-specific code needed.
     """
-    from .registry import get_registry
+    from .roster import get_roster
 
-    registry = get_registry()
-    route = registry.proxy_routes.get(provider_name)
+    roster = get_roster()
+    route = roster.proxy_routes.get(provider_name)
     if not route or not route.shared_config_patch:
         return
 
-    auth_info = registry.auth_providers.get(provider_name)
+    auth_info = roster.auth_providers.get(provider_name)
     if not auth_info:
         return
 

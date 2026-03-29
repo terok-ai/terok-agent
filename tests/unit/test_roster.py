@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: 2026 Jiri Vyskocil
 # SPDX-License-Identifier: Apache-2.0
 
-"""Tests for the YAML agent registry loader."""
+"""Tests for the YAML agent roster loader."""
 
 from __future__ import annotations
 
@@ -12,11 +12,11 @@ import pytest
 
 from terok_agent.auth import AuthProvider
 from terok_agent.headless_providers import HeadlessProvider
-from terok_agent.registry import (
+from terok_agent.roster import (
     _load_bundled_agents,
     _to_auth_provider,
     _to_headless_provider,
-    load_registry,
+    load_roster,
 )
 
 
@@ -24,7 +24,7 @@ from terok_agent.registry import (
 def _isolate_user_agents_dir(tmp_path: Path) -> None:
     """Prevent real ~/.config/terok-agent/agents/ from leaking into tests."""
     isolated = tmp_path / "empty-agents"
-    with patch("terok_agent.registry._user_agents_dir", return_value=isolated):
+    with patch("terok_agent.roster._user_agents_dir", return_value=isolated):
         yield
 
 
@@ -198,35 +198,35 @@ class TestLoadRegistry:
     """Integration tests for the complete registry load cycle."""
 
     def test_loads_all_agents(self) -> None:
-        reg = load_registry()
+        reg = load_roster()
         expected_agents = {"claude", "codex", "copilot", "vibe", "blablador", "kisski", "opencode"}
         assert set(reg.agent_names) == expected_agents
 
     def test_all_names_includes_tools(self) -> None:
-        reg = load_registry()
+        reg = load_roster()
         assert "gh" in reg.all_names
         assert "glab" in reg.all_names
         assert "claude" in reg.all_names
 
     def test_providers_only_agents(self) -> None:
-        reg = load_registry()
+        reg = load_roster()
         assert "gh" not in reg.providers
         assert "glab" not in reg.providers
         assert "claude" in reg.providers
 
     def test_auth_includes_tools(self) -> None:
-        reg = load_registry()
+        reg = load_roster()
         assert "gh" in reg.auth_providers
         assert "glab" in reg.auth_providers
 
     def test_auth_includes_opencode_derived(self) -> None:
-        reg = load_registry()
+        reg = load_roster()
         # blablador has no explicit auth section but has opencode config → auto-derived
         assert "blablador" in reg.auth_providers
         assert "kisski" in reg.auth_providers
 
     def test_mounts_include_auth_dirs(self) -> None:
-        reg = load_registry()
+        reg = load_roster()
         mount_dirs = {m.host_dir for m in reg.mounts}
         assert "_claude-config" in mount_dirs
         assert "_codex-config" in mount_dirs
@@ -234,7 +234,7 @@ class TestLoadRegistry:
         assert "_glab-config" in mount_dirs
 
     def test_mounts_include_extra_dirs(self) -> None:
-        reg = load_registry()
+        reg = load_roster()
         mount_dirs = {m.host_dir for m in reg.mounts}
         assert "_opencode-config" in mount_dirs
         assert "_opencode-data" in mount_dirs
@@ -242,39 +242,39 @@ class TestLoadRegistry:
         assert "_toad-config" in mount_dirs
 
     def test_mounts_deduplicated(self) -> None:
-        reg = load_registry()
+        reg = load_roster()
         host_dirs = [m.host_dir for m in reg.mounts]
         assert len(host_dirs) == len(set(host_dirs))
 
     def test_get_provider_resolves(self) -> None:
-        reg = load_registry()
+        reg = load_roster()
         p = reg.get_provider("codex")
         assert p.name == "codex"
 
     def test_get_provider_fallback(self) -> None:
-        reg = load_registry()
+        reg = load_roster()
         p = reg.get_provider(None)
         assert p.name == "claude"
 
     def test_get_provider_unknown_exits(self) -> None:
-        reg = load_registry()
+        reg = load_roster()
         with pytest.raises(SystemExit, match="Unknown headless provider"):
             reg.get_provider("nonexistent")
 
     def test_get_auth_provider_unknown_exits(self) -> None:
-        reg = load_registry()
+        reg = load_roster()
         with pytest.raises(SystemExit, match="Unknown auth provider"):
             reg.get_auth_provider("nonexistent")
 
     def test_collect_all_auto_approve_env(self) -> None:
-        reg = load_registry()
+        reg = load_roster()
         env = reg.collect_all_auto_approve_env()
         assert "COPILOT_ALLOW_ALL" in env
         assert "VIBE_AUTO_APPROVE" in env
         assert "OPENCODE_PERMISSION" in env
 
     def test_collect_opencode_provider_env(self) -> None:
-        reg = load_registry()
+        reg = load_roster()
         env = reg.collect_opencode_provider_env()
         assert any(k.startswith("TEROK_OC_BLABLADOR_") for k in env)
         assert any(k.startswith("TEROK_OC_KISSKI_") for k in env)
@@ -294,8 +294,8 @@ class TestUserOverrides:
         user_dir.mkdir()
         (user_dir / "claude.yaml").write_text("tier: 99\n")
 
-        with patch("terok_agent.registry._user_agents_dir", return_value=user_dir):
-            reg = load_registry()
+        with patch("terok_agent.roster._user_agents_dir", return_value=user_dir):
+            reg = load_roster()
 
         # Provider still loads correctly, tier is just metadata
         p = reg.get_provider("claude")
@@ -314,8 +314,8 @@ class TestUserOverrides:
             "capabilities:\n  log_format: plain\n"
         )
 
-        with patch("terok_agent.registry._user_agents_dir", return_value=user_dir):
-            reg = load_registry()
+        with patch("terok_agent.roster._user_agents_dir", return_value=user_dir):
+            reg = load_roster()
 
         assert "custom" in reg.agent_names
         p = reg.get_provider("custom")
@@ -333,8 +333,8 @@ class TestUserOverrides:
             "  banner_hint: Authenticate.\n"
         )
 
-        with patch("terok_agent.registry._user_agents_dir", return_value=user_dir):
-            reg = load_registry()
+        with patch("terok_agent.roster._user_agents_dir", return_value=user_dir):
+            reg = load_roster()
 
         assert "mytool" in reg.all_names
         assert "mytool" not in reg.agent_names  # it's a tool, not an agent
@@ -343,8 +343,8 @@ class TestUserOverrides:
 
     def test_no_user_dir_ok(self, tmp_path: Path) -> None:
         """Missing user dir is fine — only bundled agents are loaded."""
-        with patch("terok_agent.registry._user_agents_dir", return_value=tmp_path / "nonexistent"):
-            reg = load_registry()
+        with patch("terok_agent.roster._user_agents_dir", return_value=tmp_path / "nonexistent"):
+            reg = load_roster()
 
         assert "claude" in reg.agent_names
 
@@ -359,7 +359,7 @@ class TestRegistryBehavior:
 
     def test_every_agent_has_valid_headless_provider(self) -> None:
         """Each agent deserializes into a HeadlessProvider with required fields."""
-        reg = load_registry()
+        reg = load_roster()
         for name in reg.agent_names:
             p = reg.get_provider(name)
             assert isinstance(p, HeadlessProvider)
@@ -372,7 +372,7 @@ class TestRegistryBehavior:
 
     def test_every_auth_provider_has_valid_config(self) -> None:
         """Each auth provider has mount paths and at least one auth mode."""
-        reg = load_registry()
+        reg = load_roster()
         for name, ap in reg.auth_providers.items():
             assert isinstance(ap, AuthProvider)
             assert ap.host_dir_name, f"{name}: empty host_dir"
@@ -384,7 +384,7 @@ class TestRegistryBehavior:
 
     def test_opencode_providers_have_complete_config(self) -> None:
         """Providers with opencode config have all required fields populated."""
-        reg = load_registry()
+        reg = load_roster()
         for name, p in reg.providers.items():
             if p.opencode_config is None:
                 continue
@@ -398,7 +398,7 @@ class TestRegistryBehavior:
 
     def test_auto_approve_env_values_are_strings(self) -> None:
         """Auto-approve env values must be strings (injected into container env)."""
-        reg = load_registry()
+        reg = load_roster()
         for name, p in reg.providers.items():
             for k, v in p.auto_approve_env.items():
                 assert isinstance(k, str), f"{name}: env key {k!r} not str"
@@ -406,7 +406,7 @@ class TestRegistryBehavior:
 
     def test_session_resume_consistency(self) -> None:
         """Providers with session resume must have a resume_flag."""
-        reg = load_registry()
+        reg = load_roster()
         for name, p in reg.providers.items():
             if p.supports_session_resume:
                 assert p.resume_flag, f"{name}: supports_resume but no resume_flag"

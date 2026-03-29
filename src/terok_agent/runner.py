@@ -29,7 +29,7 @@ from .build import BuildError, build_base_images
 if TYPE_CHECKING:
     from terok_sandbox import LifecycleHooks, Sandbox
 
-    from .registry import AgentRegistry
+    from .roster import AgentRoster
 
 _logger = logging.getLogger(__name__)
 
@@ -76,12 +76,12 @@ class AgentRunner:
         self,
         *,
         sandbox: Sandbox | None = None,
-        registry: AgentRegistry | None = None,
+        roster: AgentRoster | None = None,
         base_image: str = "ubuntu:24.04",
     ) -> None:
         self._base_image = base_image
         self._sandbox: Sandbox | None = sandbox
-        self._registry: AgentRegistry | None = registry
+        self._roster: AgentRoster | None = roster
 
     @property
     def sandbox(self) -> Sandbox:
@@ -93,13 +93,13 @@ class AgentRunner:
         return self._sandbox
 
     @property
-    def registry(self) -> AgentRegistry:
-        """Lazy-init agent registry."""
-        if self._registry is None:
-            from .registry import get_registry
+    def roster(self) -> AgentRoster:
+        """Lazy-init agent roster."""
+        if self._roster is None:
+            from .roster import get_roster
 
-            self._registry = get_registry()
-        return self._registry
+            self._roster = get_roster()
+        return self._roster
 
     def _ensure_images(self) -> str:
         """Ensure L0+L1 images exist, return L1 tag."""
@@ -107,21 +107,21 @@ class AgentRunner:
         return images.l1
 
     def _shared_mounts(self, envs_dir: Path) -> list[str]:
-        """Derive shared volume mounts from the agent registry.
+        """Derive shared volume mounts from the agent roster.
 
         Includes both auth config mounts (per-provider) and general mounts
         (e.g. OpenCode runtime dirs) from the ``mounts:`` YAML section.
         """
         seen: set[str] = set()
         mounts = []
-        for _name, ap in sorted(self.registry.auth_providers.items()):
+        for _name, ap in sorted(self.roster.auth_providers.items()):
             host_dir = envs_dir / ap.host_dir_name
             host_dir.mkdir(parents=True, exist_ok=True)
             mount = f"{host_dir}:{ap.container_mount}:z"
             if ap.host_dir_name not in seen:
                 mounts.append(mount)
                 seen.add(ap.host_dir_name)
-        for m in self.registry.mounts:
+        for m in self.roster.mounts:
             if m.host_dir not in seen:
                 host_dir = envs_dir / m.host_dir
                 host_dir.mkdir(parents=True, exist_ok=True)
@@ -189,7 +189,7 @@ class AgentRunner:
         if not (is_proxy_socket_active() or is_proxy_running(cfg)):
             return {}
 
-        proxy_routes = self.registry.proxy_routes
+        proxy_routes = self.roster.proxy_routes
         db = CredentialDB(cfg.proxy_db_path)
         try:
             credential_set = "default"
@@ -217,7 +217,7 @@ class AgentRunner:
             if route.base_url_env:
                 env[route.base_url_env] = proxy_base
             # Override OpenCode base URL for proxied providers
-            provider = self.registry.providers.get(name)
+            provider = self.roster.providers.get(name)
             if provider and provider.opencode_config:
                 oc_base_key = f"TEROK_OC_{name.upper()}_BASE_URL"
                 env[oc_base_key] = f"{proxy_base}/v1"
@@ -275,10 +275,10 @@ class AgentRunner:
         }
 
         # OpenCode provider env vars (TEROK_OC_* for Blablador, KISSKI, etc.)
-        env.update(self.registry.collect_opencode_provider_env())
+        env.update(self.roster.collect_opencode_provider_env())
 
-        # Git identity — use the agent's configured identity from registry
-        provider = self.registry.providers.get(provider_name)
+        # Git identity — use the agent's configured identity from roster
+        provider = self.roster.providers.get(provider_name)
         if provider:
             env["GIT_AUTHOR_NAME"] = provider.git_author_name
             env["GIT_AUTHOR_EMAIL"] = provider.git_author_email
@@ -501,7 +501,7 @@ class AgentRunner:
         """Unified launch flow for all three modes."""
         from .headless_providers import build_headless_command
 
-        agent = self.registry.get_provider(provider)
+        agent = self.roster.get_provider(provider)
         task_id = _generate_task_id()
         code_repo, local_path = _resolve_repo(repo)
 
@@ -544,7 +544,7 @@ class AgentRunner:
             workspace.mkdir(parents=True, exist_ok=True)
             volumes.append(f"{workspace}:/workspace:Z")
 
-        # Shared auth mounts (derived from registry)
+        # Shared auth mounts (derived from roster)
         volumes += self._shared_mounts(envs_dir)
 
         # Credential proxy: inject phantom tokens and base URL overrides
@@ -556,7 +556,7 @@ class AgentRunner:
         # Permission mode — unrestricted enables auto-approve for all agents
         if unrestricted:
             env["TEROK_UNRESTRICTED"] = "1"
-            env.update(self.registry.collect_all_auto_approve_env())
+            env.update(self.roster.collect_all_auto_approve_env())
 
         # Build command based on mode
         extra_args: list[str] = []

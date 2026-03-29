@@ -196,7 +196,7 @@ def _render_template(template_name: str, variables: dict[str, str]) -> str:
     Templates live in ``resources/templates/``.  Currently they use
     Dockerfile ``ARG``/``${VAR}`` syntax (Jinja2 is a pass-through).
     Future L1 templatisation will use ``{% for agent %}`` loops driven
-    by the YAML agent registry.
+    by the YAML agent roster.
     """
     from jinja2 import BaseLoader, Environment
 
