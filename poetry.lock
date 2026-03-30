@@ -2413,7 +2413,7 @@ tomli-w = ">=1.0,<2.0"
 
 [[package]]
 name = "terok-sandbox"
-version = "0.0.0.post67.dev0+109ea05"
+version = "0.0.0.post68.dev0+6c91e50"
 description = "Hardened Podman container runner with gate server and shield integration"
 optional = false
 python-versions = ">=3.12,<4.0"
@@ -2425,17 +2425,17 @@ develop = false
 aiohttp = ">=3.9"
 cryptography = ">=43.0"
 platformdirs = ">=4.0"
-terok-shield = {git = "https://github.com/sliwowitz/terok-shield.git", rev = "42e2f87a193a5124b846e7d02478250deb606a43"}
+terok-shield = {git = "https://github.com/sliwowitz/terok-shield.git", rev = "1e1d218f40d9584d0f9b1b7290d3c56cca2147d9"}
 
 [package.source]
 type = "git"
 url = "https://github.com/sliwowitz/terok-sandbox.git"
-reference = "109ea05766839abde218dc5d4b2aad4ecf4ef89d"
-resolved_reference = "109ea05766839abde218dc5d4b2aad4ecf4ef89d"
+reference = "6c91e50af52e95cf558209745baa696100671e9a"
+resolved_reference = "6c91e50af52e95cf558209745baa696100671e9a"
 
 [[package]]
 name = "terok-shield"
-version = "0.0.0.post76.dev0+42e2f87"
+version = "0.0.0.post99.dev0+1e1d218"
 description = "nftables-based egress firewalling for Podman containers"
 optional = false
 python-versions = ">=3.12,<4.0"
@@ -2449,8 +2449,8 @@ PyYAML = ">=6.0"
 [package.source]
 type = "git"
 url = "https://github.com/sliwowitz/terok-shield.git"
-reference = "42e2f87a193a5124b846e7d02478250deb606a43"
-resolved_reference = "42e2f87a193a5124b846e7d02478250deb606a43"
+reference = "1e1d218f40d9584d0f9b1b7290d3c56cca2147d9"
+resolved_reference = "1e1d218f40d9584d0f9b1b7290d3c56cca2147d9"
 
 [[package]]
 name = "tomli"
@@ -2817,4 +2817,4 @@ propcache = ">=0.2.1"
 [metadata]
 lock-version = "2.1"
 python-versions = ">=3.12,<4.0"
-content-hash = "26c0bd9d807fca58d7269af087d81eba44270bcd95bcd53954cafb7718aab365"
+content-hash = "29324bf3a67a8932072588249edb62c6d53af7c89faeba7e0e9d4ecd62b04bba"
