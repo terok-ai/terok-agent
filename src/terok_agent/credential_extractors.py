@@ -58,11 +58,21 @@ def extract_claude_oauth(base_dir: Path) -> dict:
         if isinstance(oauth, dict):
             access_token = oauth.get("accessToken")
             if access_token:
+                # Claude Code is a JS app: expiresAt is milliseconds since
+                # epoch (Date.now() convention).  Values > 1e12 are
+                # unambiguously ms; convert to POSIX seconds so the proxy
+                # refresh check (time.time()) works correctly.
+                expires_at_raw = oauth.get("expiresAt")
+                expires_at: float | None = None
+                if isinstance(expires_at_raw, (int, float)) and not isinstance(
+                    expires_at_raw, bool
+                ):
+                    expires_at = expires_at_raw / 1000 if expires_at_raw > 1e12 else expires_at_raw
                 return {
                     "type": "oauth",
                     "access_token": access_token,
                     "refresh_token": oauth.get("refreshToken", ""),
-                    "expires_at": oauth.get("expiresAt"),
+                    "expires_at": expires_at,
                 }
 
     # Fall back to API key (config.json)

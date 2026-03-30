@@ -38,6 +38,42 @@ class TestClaudeOAuth:
         assert result["access_token"] == "sk-ant-test-123"
         assert result["refresh_token"] == "rt-test-456"
         assert result["type"] == "oauth"
+        assert result["expires_at"] == 1700000000  # seconds value kept as-is
+
+    def test_converts_ms_expires_at_to_seconds(self, tmp_path: Path) -> None:
+        """expiresAt from Claude Code (JS ms timestamp) is converted to POSIX seconds."""
+        expires_at_ms = 1_700_000_000_000  # realistic Claude Code value (ms)
+        cred = {
+            "claudeAiOauth": {
+                "accessToken": "sk-ant-ms-test",
+                "refreshToken": "rt-ms",
+                "expiresAt": expires_at_ms,
+            }
+        }
+        (tmp_path / ".credentials.json").write_text(json.dumps(cred))
+        result = extract_claude_oauth(tmp_path)
+        assert result["expires_at"] == pytest.approx(expires_at_ms / 1000)
+
+    def test_missing_expires_at_stored_as_none(self, tmp_path: Path) -> None:
+        """Missing expiresAt field results in expires_at=None (triggers proactive refresh)."""
+        cred = {"claudeAiOauth": {"accessToken": "sk-ant-no-exp", "refreshToken": "rt-no-exp"}}
+        (tmp_path / ".credentials.json").write_text(json.dumps(cred))
+        result = extract_claude_oauth(tmp_path)
+        assert result["expires_at"] is None
+
+    @pytest.mark.parametrize("bad_value", ["1700000000000", True, False, None])
+    def test_non_numeric_expires_at_stored_as_none(self, tmp_path: Path, bad_value: object) -> None:
+        """Non-numeric expiresAt (string, bool, null) is ignored; expires_at falls back to None."""
+        cred = {
+            "claudeAiOauth": {
+                "accessToken": "sk-ant-bad-exp",
+                "refreshToken": "rt-bad",
+                "expiresAt": bad_value,
+            }
+        }
+        (tmp_path / ".credentials.json").write_text(json.dumps(cred))
+        result = extract_claude_oauth(tmp_path)
+        assert result["expires_at"] is None
 
     def test_extracts_api_key_fallback(self, tmp_path: Path) -> None:
         """Falls back to config.json API key when no OAuth credentials."""
