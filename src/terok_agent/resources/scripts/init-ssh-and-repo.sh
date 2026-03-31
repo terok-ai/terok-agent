@@ -12,20 +12,20 @@ set -euo pipefail
 #   GIT_RESET_MODE          - "none" (default), "hard", or "soft"
 #   CLONE_FROM              - optional alternate source to seed the repo (e.g. file:///git-gate/gate.git)
 #   EXTERNAL_REMOTE_URL     - optional URL for upstream repo in gatekeeping mode (added as "external" remote)
-#   TEROK_SSH_AGENT_PORT    - optional, TCP port for SSH agent proxy on host
-#   TEROK_SSH_AGENT_TOKEN   - optional, phantom token for SSH agent authentication
+#   (bridge env vars — TEROK_SSH_AGENT_PORT, TEROK_SSH_AGENT_TOKEN, TEROK_PROXY_PORT, GH_TOKEN —
+#    are consumed by ensure-bridges.sh, sourced below)
 
 : "${GIT_RESET_MODE:=none}"
 
 : "${HOME:=/home/dev}"
 
-# SSH agent proxy: bridge SSH_AUTH_SOCK to the host-side SSH agent handler.
-# The proxy holds private keys on the host and signs on behalf of the container.
-if [[ -n "${TEROK_SSH_AGENT_PORT:-}" ]] && [[ -n "${TEROK_SSH_AGENT_TOKEN:-}" ]] && command -v socat >/dev/null 2>&1; then
-  rm -f /tmp/ssh-agent.sock
-  socat "UNIX-LISTEN:/tmp/ssh-agent.sock,fork" "SYSTEM:ssh-agent-bridge.sh" &
-  export SSH_AUTH_SOCK=/tmp/ssh-agent.sock
-  echo ">> SSH agent bridge started (socat PID: $!, SSH_AUTH_SOCK=${SSH_AUTH_SOCK})"
+# Socat bridges: SSH agent + gh credential proxy.
+# Delegates to ensure-bridges.sh (single source of truth for both bridges).
+# shellcheck source=ensure-bridges.sh
+source ensure-bridges.sh
+
+if [[ -n "${SSH_AUTH_SOCK:-}" ]]; then
+  echo ">> bridges established (SSH_AUTH_SOCK=${SSH_AUTH_SOCK})"
 
   # Generate minimal ~/.ssh/config — the agent proxy handles keys, so no
   # IdentityFile is needed.  StrictHostKeyChecking=accept-new prevents
@@ -42,7 +42,7 @@ SSHEOF
   if command -v ssh >/dev/null 2>&1; then
     if [[ -n "${CODE_REPO:-}" && "${CODE_REPO}" == *"github.com"* ]]; then
       echo '>> warm github known_hosts (best-effort)'
-      ssh -o BatchMode=yes -o StrictHostKeyChecking=accept-new -o LogLevel=ERROR git@github.com || true
+      timeout 5 ssh -o BatchMode=yes -o StrictHostKeyChecking=accept-new -o LogLevel=ERROR git@github.com || true
     fi
   fi
 fi
@@ -323,15 +323,6 @@ if [[ "${TEROK_UNRESTRICTED:-}" == "1" ]]; then
     printf '{"permissions":{"defaultMode":"bypassPermissions"}}\n' \
       > /etc/claude-code/managed-settings.json
   fi
-fi
-
-# Credential proxy: start socat bridges for tools that need Unix sockets.
-# gh routes all API traffic through http_unix_socket (set in config.yml).
-# The socat bridge pipes that socket to the TCP proxy on the host.
-if [[ -n "${TEROK_PROXY_PORT:-}" ]] && [[ -n "${GH_TOKEN:-}" ]] && command -v socat >/dev/null 2>&1; then
-  rm -f /tmp/terok-gh-proxy.sock
-  socat UNIX-LISTEN:/tmp/terok-gh-proxy.sock,fork TCP:host.containers.internal:"${TEROK_PROXY_PORT}" &
-  echo ">> gh proxy bridge started (socat PID: $!)"
 fi
 
 # Signal readiness for host tools that watch initial logs

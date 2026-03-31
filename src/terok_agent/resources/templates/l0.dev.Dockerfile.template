@@ -47,7 +47,8 @@ WORKDIR /workspace
 
 COPY scripts/init-ssh-and-repo.sh /usr/local/bin/init-ssh-and-repo.sh
 COPY scripts/ssh-agent-bridge.sh /usr/local/bin/ssh-agent-bridge.sh
-RUN chmod +x /usr/local/bin/init-ssh-and-repo.sh /usr/local/bin/ssh-agent-bridge.sh
+COPY scripts/ensure-bridges.sh /usr/local/bin/ensure-bridges.sh
+RUN chmod +x /usr/local/bin/init-ssh-and-repo.sh /usr/local/bin/ssh-agent-bridge.sh /usr/local/bin/ensure-bridges.sh
 
 # tmux config for persistent login sessions (prefix ^a, green status bar)
 COPY tmux/container-tmux.conf /etc/tmux.conf

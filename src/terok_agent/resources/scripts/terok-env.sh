@@ -68,7 +68,11 @@ glab() {
   )
 }
 
-# ── SSH agent ─────────────────────────────────────────────────────────────────
+# ── Proxy bridges ────────────────────────────────────────────────────────────
+
+# Ensure socat bridges are alive (idempotent; self-heals after container restart).
+# shellcheck source=ensure-bridges.sh
+command -v socat >/dev/null 2>&1 && . ensure-bridges.sh 2>/dev/null
 
 # Export SSH_AUTH_SOCK when the bridge socket exists; unset if it's gone.
 if [[ -S /tmp/ssh-agent.sock ]]; then
