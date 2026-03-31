@@ -326,7 +326,7 @@ class TestCredentialProxyEnv:
 
         # SandboxConfig derives proxy_db_path from state_dir, so set state_dir
         # to tmp_path and create the DB at the expected location.
-        cfg = SandboxConfig(state_dir=tmp_path)
+        cfg = SandboxConfig(state_dir=tmp_path, credentials_dir=tmp_path / "credentials")
         cfg.proxy_db_path.parent.mkdir(parents=True, exist_ok=True)
 
         db = CredentialDB(cfg.proxy_db_path)
@@ -355,7 +355,7 @@ class TestCredentialProxyEnv:
         """When credentials exist but none map to proxy routes, returns empty."""
         from terok_sandbox import CredentialDB, SandboxConfig
 
-        cfg = SandboxConfig(state_dir=tmp_path)
+        cfg = SandboxConfig(state_dir=tmp_path, credentials_dir=tmp_path / "credentials")
         cfg.proxy_db_path.parent.mkdir(parents=True, exist_ok=True)
 
         db = CredentialDB(cfg.proxy_db_path)
