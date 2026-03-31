@@ -146,7 +146,7 @@ jobs:
 
   sonar:
     name: SonarQube Cloud
-    if: github.repository == 'terok-ai/terok-agent' && github.actor != 'dependabot[bot]' && (github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository)
+    if: github.repository == 'terok-ai/terok-agent' && (github.event_name == 'push' || (github.actor != 'dependabot[bot]' && github.event.pull_request.head.repo.full_name == github.repository))
     needs: [unit-tests, ruff, bandit]
     runs-on: ubuntu-latest
     steps:
