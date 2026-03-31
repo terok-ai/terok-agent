@@ -405,7 +405,7 @@ class AgentConfigSpec:
     provider: str = "claude"
     instructions: str | None = None
     default_agent: str | None = None
-    envs_base_dir: Path | None = None
+    mounts_base: Path | None = None
 
     def __post_init__(self) -> None:
         """Coerce mutable sequences to tuples for true immutability."""
@@ -471,14 +471,14 @@ def prepare_agent_config_dir(spec: AgentConfigSpec) -> Path:
     # interactive and headless modes).
     from .headless_providers import HEADLESS_PROVIDERS
 
-    envs_base = spec.envs_base_dir
-    if envs_base is None:
-        raise ValueError("envs_base_dir is required in AgentConfigSpec")
-    _inject_opencode_instructions(envs_base / "_opencode-config" / "opencode.json")
+    mounts_base = spec.mounts_base
+    if mounts_base is None:
+        raise ValueError("mounts_base is required in AgentConfigSpec")
+    _inject_opencode_instructions(mounts_base / "_opencode-config" / "opencode.json")
     for _p in HEADLESS_PROVIDERS.values():
         if _p.opencode_config is not None:
             _inject_opencode_instructions(
-                envs_base / f"_{_p.name}-config" / "opencode" / "opencode.json"
+                mounts_base / f"_{_p.name}-config" / "opencode" / "opencode.json"
             )
 
     # Write shell wrapper functions for ALL providers so interactive CLI users
@@ -502,7 +502,7 @@ def prepare_agent_config_dir(spec: AgentConfigSpec) -> Path:
 
     # Write SessionStart hook — only for providers that support it (Claude)
     if resolved.supports_session_hook:
-        shared_claude_dir = envs_base / "_claude-config"
+        shared_claude_dir = mounts_base / "_claude-config"
         ensure_dir_writable(shared_claude_dir, "_claude-config")
         _write_session_hook(shared_claude_dir / "settings.json")
 

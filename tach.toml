@@ -22,6 +22,11 @@ ignore_type_checking_imports = true
 #   instructions → agent_config
 #   resources (data files, no code deps)
 
+# Path resolution — standalone XDG/FHS helpers
+[[modules]]
+path = "terok_agent.paths"
+depends_on = []
+
 # Vendored utilities — standalone, no internal deps
 [[modules]]
 path = "terok_agent._util"
@@ -78,6 +83,7 @@ depends_on = [
 [[modules]]
 path = "terok_agent.proxy_config"
 depends_on = [
+    "terok_agent.paths",
     "terok_agent.roster",
 ]
 
@@ -109,6 +115,7 @@ depends_on = [
     "terok_agent.build",
     "terok_agent.headless_providers",
     "terok_agent.instructions",
+    "terok_agent.paths",
     "terok_agent.roster",
 ]
 
@@ -116,6 +123,7 @@ depends_on = [
 [[modules]]
 path = "terok_agent.proxy_commands"
 depends_on = [
+    "terok_agent.paths",
     "terok_agent.roster",
 ]
 
@@ -125,6 +133,7 @@ path = "terok_agent.commands"
 depends_on = [
     "terok_agent.auth",
     "terok_agent.build",
+    "terok_agent.paths",
     "terok_agent.proxy_config",
     "terok_agent.roster",
     "terok_agent.runner",
@@ -151,6 +160,7 @@ depends_on = [
     "terok_agent.credential_extractors",
     "terok_agent.headless_providers",
     "terok_agent.instructions",
+    "terok_agent.paths",
     "terok_agent.proxy_commands",
     "terok_agent.roster",
     "terok_agent.runner",

@@ -37,7 +37,7 @@ class AuthProvider:
     """Human-readable display name (e.g. ``"Codex"``)."""
 
     host_dir_name: str
-    """Directory name under ``get_envs_base_dir()`` (e.g. ``"_codex-config"``)."""
+    """Directory name under ``mounts_dir()`` (e.g. ``"_codex-config"``)."""
 
     container_mount: str
     """Mount point inside the container (e.g. ``"/home/dev/.codex"``)."""
@@ -150,7 +150,7 @@ def _run_auth_container(
     project_id: str,
     provider: AuthProvider,
     *,
-    envs_base_dir: Path,
+    mounts_dir: Path,
     image: str,
     credential_set: str = "default",
 ) -> None:
@@ -293,7 +293,7 @@ def authenticate(
     project_id: str,
     provider: str,
     *,
-    envs_base_dir: Path,
+    mounts_dir: Path,
     image: str,
 ) -> None:
     """Run the auth flow for *provider* against *project_id*.
@@ -307,7 +307,7 @@ def authenticate(
     Args:
         project_id: Project identifier (for container naming).
         provider: Auth provider name (e.g. ``"claude"``).
-        envs_base_dir: Base directory for shared env mounts.
+        mounts_dir: Base directory for shared config bind-mounts.
         image: Container image to use for the auth container.
 
     Raises ``SystemExit`` if the provider name is unknown.
@@ -329,7 +329,7 @@ def authenticate(
             store_api_key(provider, key)
             return
         # choice == "1" or anything else → OAuth
-        _run_auth_container(project_id, info, envs_base_dir=envs_base_dir, image=image)
+        _run_auth_container(project_id, info, mounts_dir=mounts_dir, image=image)
 
     elif info.supports_api_key:
         # API key only — fast path, no container
@@ -338,4 +338,4 @@ def authenticate(
 
     else:
         # OAuth only
-        _run_auth_container(project_id, info, envs_base_dir=envs_base_dir, image=image)
+        _run_auth_container(project_id, info, mounts_dir=mounts_dir, image=image)

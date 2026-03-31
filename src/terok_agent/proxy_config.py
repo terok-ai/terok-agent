@@ -33,12 +33,14 @@ def write_proxy_config(provider_name: str) -> None:
 
     from terok_sandbox import SandboxConfig, get_proxy_port
 
+    from .paths import mounts_dir
+
     cfg = SandboxConfig()
     port = get_proxy_port(cfg)
     proxy_url = f"http://host.containers.internal:{port}"
 
     patch = route.shared_config_patch
-    shared_dir = cfg.effective_envs_dir / auth_info.host_dir_name
+    shared_dir = mounts_dir() / auth_info.host_dir_name
     config_path = shared_dir / patch["file"]
     shared_dir.mkdir(parents=True, exist_ok=True)
 

@@ -106,7 +106,7 @@ class AgentRunner:
         images = build_base_images(self._base_image)
         return images.l1
 
-    def _shared_mounts(self, envs_dir: Path) -> list[str]:
+    def _shared_mounts(self, mounts_base: Path) -> list[str]:
         """Derive shared volume mounts from the agent roster.
 
         Includes both auth config mounts (per-provider) and general mounts
@@ -115,7 +115,7 @@ class AgentRunner:
         seen: set[str] = set()
         mounts = []
         for _name, ap in sorted(self.roster.auth_providers.items()):
-            host_dir = envs_dir / ap.host_dir_name
+            host_dir = mounts_base / ap.host_dir_name
             host_dir.mkdir(parents=True, exist_ok=True)
             mount = f"{host_dir}:{ap.container_mount}:z"
             if ap.host_dir_name not in seen:
@@ -123,7 +123,7 @@ class AgentRunner:
                 seen.add(ap.host_dir_name)
         for m in self.roster.mounts:
             if m.host_dir not in seen:
-                host_dir = envs_dir / m.host_dir
+                host_dir = mounts_base / m.host_dir
                 host_dir.mkdir(parents=True, exist_ok=True)
                 mounts.append(f"{host_dir}:{m.container_path}:z")
                 seen.add(m.host_dir)
@@ -159,7 +159,6 @@ class AgentRunner:
             project_id=repo_key,
             gate_path=gate_path,
             upstream_url=repo_url,
-            envs_base_dir=cfg.effective_envs_dir,
         )
         gate.sync()
 
@@ -295,7 +294,7 @@ class AgentRunner:
         *,
         prompt: str | None = None,
         instructions: str | None = None,
-        envs_dir: Path,
+        mounts_base: Path,
         project_root: Path | None = None,
     ) -> Path:
         """Prepare the agent-config directory for a task.
@@ -317,7 +316,7 @@ class AgentRunner:
             prompt=prompt,
             provider=provider,
             instructions=resolved_instructions,
-            envs_base_dir=envs_dir,
+            mounts_base=mounts_base,
         )
         return prepare_agent_config_dir(spec)
 
@@ -512,7 +511,9 @@ class AgentRunner:
         task_dir = Path(tempfile.mkdtemp(prefix=f"terok-agent-{task_id}-"))
 
         # Env base for shared auth mounts
-        envs_dir = self.sandbox.config.effective_envs_dir
+        from .paths import mounts_dir
+
+        mounts_base = mounts_dir()
 
         # Prepare agent config (pass local_path so repo instructions.md is found)
         agent_config_dir = self._prepare_agent_config(
@@ -520,7 +521,7 @@ class AgentRunner:
             task_id,
             provider,
             prompt=prompt,
-            envs_dir=envs_dir,
+            mounts_base=mounts_base,
             project_root=local_path,
         )
 
@@ -545,7 +546,7 @@ class AgentRunner:
             volumes.append(f"{workspace}:/workspace:Z")
 
         # Shared auth mounts (derived from roster)
-        volumes += self._shared_mounts(envs_dir)
+        volumes += self._shared_mounts(mounts_base)
 
         # Credential proxy: inject phantom tokens and base URL overrides
         env.update(self._credential_proxy_env(task_id))

@@ -186,8 +186,7 @@ class TestScanLeakedCredentials:
         cred_file = cred_dir / route.credential_file
         cred_file.write_text('{"secret": true}')
 
-        with patch("terok_sandbox.SandboxConfig") as mock_cfg_cls:
-            mock_cfg_cls.return_value.effective_envs_dir = tmp_path
+        with patch("terok_agent.paths.mounts_dir", return_value=tmp_path):
             _handle_clean()
 
         assert not cred_file.exists()
@@ -199,8 +198,7 @@ class TestScanLeakedCredentials:
 
         from terok_agent.proxy_commands import _handle_clean
 
-        with patch("terok_sandbox.SandboxConfig") as mock_cfg_cls:
-            mock_cfg_cls.return_value.effective_envs_dir = Path("/nonexistent")
+        with patch("terok_agent.paths.mounts_dir", return_value=Path("/nonexistent")):
             _handle_clean()
 
         assert "No leaked" in capsys.readouterr().out

@@ -245,7 +245,7 @@ class TestPrepareAgentConfigDir:
             task_id=task_id,
             subagents=[],
             default_agent=None,
-            envs_base_dir=kwargs.pop("envs_base_dir", None),
+            mounts_base=kwargs.pop("mounts_base", None),
             instructions=kwargs.pop("instructions", None),
             **kwargs,
         )
@@ -255,7 +255,7 @@ class TestPrepareAgentConfigDir:
         """Instructions text is written to instructions.md."""
         with tempfile.TemporaryDirectory() as envs:
             spec = self._make_spec(
-                tmp_path / "tasks", "t1", instructions="Custom.", envs_base_dir=Path(envs)
+                tmp_path / "tasks", "t1", instructions="Custom.", mounts_base=Path(envs)
             )
             (tmp_path / "tasks" / "t1").mkdir(parents=True)
             d = prepare_agent_config_dir(spec)
@@ -265,7 +265,7 @@ class TestPrepareAgentConfigDir:
     def test_default_instructions_when_none(self, _mock: object, tmp_path: Path) -> None:
         """Default instructions.md written when instructions is None."""
         with tempfile.TemporaryDirectory() as envs:
-            spec = self._make_spec(tmp_path / "tasks", "t2", envs_base_dir=Path(envs))
+            spec = self._make_spec(tmp_path / "tasks", "t2", mounts_base=Path(envs))
             (tmp_path / "tasks" / "t2").mkdir(parents=True)
             d = prepare_agent_config_dir(spec)
             assert "conventions" in (d / "instructions.md").read_text(encoding="utf-8")
@@ -275,7 +275,7 @@ class TestPrepareAgentConfigDir:
         """Claude wrapper includes --append-system-prompt when instructions given."""
         with tempfile.TemporaryDirectory() as envs:
             spec = self._make_spec(
-                tmp_path / "tasks", "t3", instructions="Test.", envs_base_dir=Path(envs)
+                tmp_path / "tasks", "t3", instructions="Test.", mounts_base=Path(envs)
             )
             (tmp_path / "tasks" / "t3").mkdir(parents=True)
             d = prepare_agent_config_dir(spec)

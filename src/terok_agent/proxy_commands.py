@@ -46,7 +46,7 @@ def _handle_stop() -> None:
     print("Credential proxy stopped.")
 
 
-def scan_leaked_credentials(envs_base: Path) -> list[tuple[str, Path]]:
+def scan_leaked_credentials(mounts_base: Path) -> list[tuple[str, Path]]:
     """Return ``(provider, host_path)`` for credential files found in shared mounts.
 
     When the credential proxy is active, real secrets should only live in the
@@ -65,7 +65,7 @@ def scan_leaked_credentials(envs_base: Path) -> list[tuple[str, Path]]:
         if not auth:
             continue
         try:
-            path = envs_base / auth.host_dir_name / route.credential_file
+            path = mounts_base / auth.host_dir_name / route.credential_file
             if path.is_file() and path.stat().st_size > 0:
                 leaked.append((name, path))
         except (OSError, TypeError):
@@ -75,7 +75,9 @@ def scan_leaked_credentials(envs_base: Path) -> list[tuple[str, Path]]:
 
 def _handle_status() -> None:
     """Show credential proxy status."""
-    from terok_sandbox import SandboxConfig, get_proxy_status, is_proxy_systemd_available
+    from terok_sandbox import get_proxy_status, is_proxy_systemd_available
+
+    from .paths import mounts_dir
 
     status = get_proxy_status()
     state = "running" if status.running else "stopped"
@@ -91,7 +93,7 @@ def _handle_status() -> None:
     if not status.running and status.mode == "none" and is_proxy_systemd_available():
         print("\nHint: run 'install' to set up systemd socket activation.")
 
-    leaked = scan_leaked_credentials(SandboxConfig().effective_envs_dir)
+    leaked = scan_leaked_credentials(mounts_dir())
     if leaked:
         print("\nWARNING: Real credentials found in shared config mounts:")
         for provider, path in leaked:
@@ -135,9 +137,9 @@ def _handle_routes() -> None:
 
 def _handle_clean() -> None:
     """Remove leaked credential files from shared config mounts."""
-    from terok_sandbox import SandboxConfig
+    from .paths import mounts_dir
 
-    leaked = scan_leaked_credentials(SandboxConfig().effective_envs_dir)
+    leaked = scan_leaked_credentials(mounts_dir())
     if not leaked:
         print("No leaked credential files found.")
         return

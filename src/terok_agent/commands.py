@@ -163,10 +163,9 @@ def _handle_auth(*, agent: str, api_key: str | None = None) -> None:
         from .build import l1_image_tag
 
         image = l1_image_tag("ubuntu:24.04")
-        from terok_sandbox import SandboxConfig
+        from .paths import mounts_dir
 
-        cfg = SandboxConfig()
-        authenticate("standalone", agent, envs_base_dir=cfg.effective_envs_dir, image=image)
+        authenticate("standalone", agent, mounts_dir=mounts_dir(), image=image)
 
     # Write proxy URLs to shared config files (e.g. Vibe config.toml, gh config.yml)
     from .proxy_config import write_proxy_config

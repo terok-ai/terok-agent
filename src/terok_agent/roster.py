@@ -221,7 +221,7 @@ class MountDef:
     """A shared directory mount derived from the agent roster."""
 
     host_dir: str
-    """Directory name under ``envs_base_dir`` (e.g. ``"_codex-config"``)."""
+    """Directory name under ``mounts_dir()`` (e.g. ``"_codex-config"``)."""
 
     container_path: str
     """Mount point inside the container (e.g. ``"/home/dev/.codex"``)."""
