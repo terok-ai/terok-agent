@@ -39,11 +39,13 @@ _USER_AGENTS_DIR_NAME = "agents"
 
 def _user_agents_dir() -> Path:
     """Return ``~/.config/terok/agent/agents/``."""
+    from .paths import _SUBDIR, _UMBRELLA
+
     try:
         from platformdirs import user_config_dir
     except ImportError:  # pragma: no cover
-        return Path.home() / ".config" / "terok" / "agent" / _USER_AGENTS_DIR_NAME
-    return Path(user_config_dir("terok")) / "agent" / _USER_AGENTS_DIR_NAME
+        return Path.home() / ".config" / _UMBRELLA / _SUBDIR / _USER_AGENTS_DIR_NAME
+    return Path(user_config_dir(_UMBRELLA)) / _SUBDIR / _USER_AGENTS_DIR_NAME
 
 
 # ---------------------------------------------------------------------------
