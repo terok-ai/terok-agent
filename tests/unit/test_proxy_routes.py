@@ -362,6 +362,133 @@ class TestProxyCommandHandlers:
         assert "clean" in out
 
 
+class TestFormatCredentials:
+    """Verify _format_credentials() type-annotated status display."""
+
+    def test_shows_credential_types(self, tmp_path: Path) -> None:
+        """Formats credentials as 'name (type)' from the DB."""
+        from terok_sandbox import CredentialDB
+
+        from terok_agent.proxy_commands import _format_credentials
+
+        db_path = tmp_path / "creds.db"
+        db = CredentialDB(db_path)
+        db.store_credential("default", "claude", {"type": "oauth", "access_token": "t"})
+        db.store_credential("default", "vibe", {"type": "api_key", "key": "k"})
+        db.close()
+
+        status = MagicMock(
+            credentials_stored=("claude", "vibe"),
+            db_path=db_path,
+        )
+        result = _format_credentials(status)
+        assert result == "claude (oauth), vibe (api_key)"
+
+    def test_unknown_type_when_missing(self, tmp_path: Path) -> None:
+        """Credentials without a type field show 'unknown'."""
+        from terok_sandbox import CredentialDB
+
+        from terok_agent.proxy_commands import _format_credentials
+
+        db_path = tmp_path / "creds.db"
+        db = CredentialDB(db_path)
+        db.store_credential("default", "legacy", {"key": "k"})
+        db.close()
+
+        status = MagicMock(credentials_stored=("legacy",), db_path=db_path)
+        assert "unknown" in _format_credentials(status)
+
+    def test_empty_credentials(self) -> None:
+        """Returns 'none stored' when no credentials exist."""
+        from terok_agent.proxy_commands import _format_credentials
+
+        status = MagicMock(credentials_stored=())
+        assert _format_credentials(status) == "none stored"
+
+    def test_db_failure_falls_back_to_plain_names(self) -> None:
+        """Falls back to plain provider names when DB is unreadable."""
+        from terok_agent.proxy_commands import _format_credentials
+
+        status = MagicMock(
+            credentials_stored=("claude", "gh"),
+            db_path=Path("/nonexistent/creds.db"),
+        )
+        assert _format_credentials(status) == "claude, gh"
+
+
+class TestToProxyRoute:
+    """Verify _to_proxy_route() parsing edge cases."""
+
+    def test_both_socket_fields_accepted(self) -> None:
+        """Both socket_path and socket_env together are valid."""
+        from terok_agent.roster import _to_proxy_route
+
+        route = _to_proxy_route(
+            "test",
+            {
+                "credential_proxy": {
+                    "route_prefix": "test",
+                    "upstream": "https://example.com",
+                    "socket_path": "/tmp/test.sock",
+                    "socket_env": "TEST_SOCKET",
+                }
+            },
+        )
+        assert route is not None
+        assert route.socket_path == "/tmp/test.sock"
+        assert route.socket_env == "TEST_SOCKET"
+
+    def test_neither_socket_field_accepted(self) -> None:
+        """Omitting both socket fields is valid (no socket transport)."""
+        from terok_agent.roster import _to_proxy_route
+
+        route = _to_proxy_route(
+            "test",
+            {
+                "credential_proxy": {
+                    "route_prefix": "test",
+                    "upstream": "https://example.com",
+                }
+            },
+        )
+        assert route is not None
+        assert route.socket_path == ""
+        assert route.socket_env == ""
+
+    def test_oauth_phantom_env_parsed(self) -> None:
+        """oauth_phantom_env is parsed from YAML data."""
+        from terok_agent.roster import _to_proxy_route
+
+        route = _to_proxy_route(
+            "test",
+            {
+                "credential_proxy": {
+                    "route_prefix": "test",
+                    "upstream": "https://example.com",
+                    "oauth_phantom_env": {"MY_OAUTH_TOKEN": True},
+                }
+            },
+        )
+        assert route is not None
+        assert route.oauth_phantom_env == {"MY_OAUTH_TOKEN": True}
+
+    def test_missing_required_field_raises(self) -> None:
+        """Missing route_prefix or upstream raises ValueError."""
+        from terok_agent.roster import _to_proxy_route
+
+        with pytest.raises(ValueError, match="route_prefix"):
+            _to_proxy_route("test", {"credential_proxy": {"upstream": "https://x.com"}})
+        with pytest.raises(ValueError, match="upstream"):
+            _to_proxy_route("test", {"credential_proxy": {"route_prefix": "t"}})
+
+    def test_no_credential_proxy_returns_none(self) -> None:
+        """Agent without credential_proxy section returns None."""
+        from terok_agent.roster import _to_proxy_route
+
+        assert _to_proxy_route("test", {}) is None
+        assert _to_proxy_route("test", {"credential_proxy": {}}) is None
+
+
 class TestEnsureProxyRoutes:
     """Verify ensure_proxy_routes writes routes.json to disk."""
 
