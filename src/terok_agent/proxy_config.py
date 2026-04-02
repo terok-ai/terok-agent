@@ -10,6 +10,7 @@ route API traffic through the credential proxy.
 
 from __future__ import annotations
 
+import sys
 from pathlib import Path
 
 
@@ -54,11 +55,19 @@ def write_proxy_config(provider_name: str) -> None:
 
 def _apply_toml_patch(config_path: Path, patch: dict, proxy_url: str) -> None:
     """Patch a TOML array-of-tables entry."""
-    try:
-        import tomllib
+    import tomllib
 
-        existing = tomllib.loads(config_path.read_text()) if config_path.is_file() else {}
-    except Exception:
+    if config_path.is_file():
+        try:
+            existing = tomllib.loads(config_path.read_text())
+        except Exception as exc:
+            print(
+                f"Warning [proxy-config]: failed to parse {config_path}: "
+                f"{type(exc).__name__}: {exc}",
+                file=sys.stderr,
+            )
+            existing = {}
+    else:
         existing = {}
 
     table_key = patch["toml_table"]
@@ -90,9 +99,17 @@ def _apply_yaml_patch(config_path: Path, patch: dict, proxy_url: str) -> None:
 
     yaml = YAML()
     yaml.preserve_quotes = True
-    try:
-        existing = yaml.load(config_path) if config_path.is_file() else {}
-    except Exception:
+    if config_path.is_file():
+        try:
+            existing = yaml.load(config_path)
+        except Exception as exc:
+            print(
+                f"Warning [proxy-config]: failed to parse {config_path}: "
+                f"{type(exc).__name__}: {exc}",
+                file=sys.stderr,
+            )
+            existing = {}
+    else:
         existing = {}
     if not isinstance(existing, dict):
         existing = {}

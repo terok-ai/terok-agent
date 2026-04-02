@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import logging
 import shlex
+import sys
 import tempfile
 import uuid
 from pathlib import Path
@@ -189,7 +190,15 @@ class AgentRunner:
             return {}
 
         proxy_routes = self.roster.proxy_routes
-        db = CredentialDB(cfg.proxy_db_path)
+        try:
+            db = CredentialDB(cfg.proxy_db_path)
+        except Exception as exc:
+            print(
+                f"Warning [runner]: credential proxy is running but DB at "
+                f"{cfg.proxy_db_path} is unavailable: {type(exc).__name__}: {exc}",
+                file=sys.stderr,
+            )
+            return {}
         try:
             credential_set = "default"
             stored_providers = set(db.list_credentials(credential_set))
@@ -252,14 +261,22 @@ class AgentRunner:
         except subprocess.TimeoutExpired:
             proc.terminate()
             print("Agent timed out", file=sys.stderr)
-        except (FileNotFoundError, OSError):
-            pass
+        except (FileNotFoundError, OSError) as exc:
+            print(
+                f"Warning [runner]: failed to stream logs for {cname}: {type(exc).__name__}: {exc}",
+                file=sys.stderr,
+            )
 
         # Retrieve exit code from the container itself
         try:
             result = subprocess.run(["podman", "wait", cname], capture_output=True, timeout=10)
             exit_code = int(result.stdout.decode().strip()) if result.stdout else 1
-        except (subprocess.TimeoutExpired, ValueError, FileNotFoundError):
+        except (subprocess.TimeoutExpired, ValueError, FileNotFoundError) as exc:
+            print(
+                f"Warning [runner]: failed to retrieve exit code for {cname}: "
+                f"{type(exc).__name__}: {exc}",
+                file=sys.stderr,
+            )
             exit_code = 1
 
         if exit_code != 0:

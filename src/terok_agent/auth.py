@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import shutil
 import subprocess
+import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -265,9 +266,16 @@ def _capture_credentials(
     try:
         cred_data = extract_credential(provider_name, auth_dir)
     except Exception as exc:
-        print(f"\nWarning: could not extract credentials for {provider_name}: {exc}")
-        print("The auth flow completed but credentials were not captured.")
-        print("You may need to re-authenticate or check the credential file format.")
+        print(
+            f"\nWarning [auth]: could not extract credentials for {provider_name} "
+            f"from {auth_dir}: {type(exc).__name__}: {exc}",
+            file=sys.stderr,
+        )
+        print("The auth flow completed but credentials were not captured.", file=sys.stderr)
+        print(
+            "You may need to re-authenticate or check the credential file format.",
+            file=sys.stderr,
+        )
         # List files in the auth dir to aid debugging
         files = sorted(p.relative_to(auth_dir) for p in auth_dir.rglob("*") if p.is_file())
         if files:
@@ -287,8 +295,15 @@ def _capture_credentials(
         finally:
             db.close()
     except Exception as exc:
-        print(f"\nWarning: failed to store credentials: {exc}")
-        print("The auth flow completed but credentials were not saved to the proxy DB.")
+        print(
+            f"\nWarning [auth]: failed to store credentials for {provider_name} "
+            f"in proxy DB: {type(exc).__name__}: {exc}",
+            file=sys.stderr,
+        )
+        print(
+            "The auth flow completed but credentials were not saved to the proxy DB.",
+            file=sys.stderr,
+        )
         return
 
     # Write static .credentials.json for OAuth subscription mode detection

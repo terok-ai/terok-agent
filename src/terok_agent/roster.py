@@ -19,6 +19,7 @@ Directory layout::
 from __future__ import annotations
 
 import importlib.resources
+import sys
 from dataclasses import dataclass, field
 from functools import lru_cache
 from pathlib import Path
@@ -69,7 +70,15 @@ def _load_bundled_agents() -> dict[str, dict]:
         if not hasattr(item, "name") or not item.name.endswith(".yaml"):
             continue
         name = item.name.removesuffix(".yaml")
-        data = _load_yaml(item.read_text(encoding="utf-8"))
+        try:
+            data = _load_yaml(item.read_text(encoding="utf-8"))
+        except Exception as exc:
+            print(
+                f"Warning [roster]: failed to parse bundled agent {name!r}: "
+                f"{type(exc).__name__}: {exc}",
+                file=sys.stderr,
+            )
+            continue
         if data:
             agents[name] = data
     return agents
@@ -83,7 +92,15 @@ def _load_user_agents() -> dict[str, dict]:
         return agents
     for path in sorted(user_dir.glob("*.yaml")):
         name = path.stem
-        data = _load_yaml(path.read_text(encoding="utf-8"))
+        try:
+            data = _load_yaml(path.read_text(encoding="utf-8"))
+        except Exception as exc:
+            print(
+                f"Warning [roster]: failed to parse user agent file {path}: "
+                f"{type(exc).__name__}: {exc}",
+                file=sys.stderr,
+            )
+            continue
         if data:
             agents[name] = data
     return agents
