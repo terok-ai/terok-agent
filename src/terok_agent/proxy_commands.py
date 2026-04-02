@@ -73,6 +73,28 @@ def scan_leaked_credentials(mounts_base: Path) -> list[tuple[str, Path]]:
     return leaked
 
 
+def _format_credentials(status: object) -> str:
+    """Format stored credentials as ``name (type), ...`` for status display."""
+    from terok_sandbox import CredentialDB, CredentialProxyStatus
+
+    st: CredentialProxyStatus = status  # type: ignore[assignment]
+    if not st.credentials_stored:
+        return "none stored"
+    try:
+        db = CredentialDB(st.db_path)
+        try:
+            parts = []
+            for name in st.credentials_stored:
+                cred = db.load_credential("default", name)
+                ctype = cred.get("type", "unknown") if cred else "unknown"
+                parts.append(f"{name} ({ctype})")
+        finally:
+            db.close()
+        return ", ".join(parts)
+    except Exception:  # noqa: BLE001
+        return ", ".join(st.credentials_stored)
+
+
 def _handle_status() -> None:
     """Show credential proxy status."""
     from terok_sandbox import get_proxy_status, is_proxy_systemd_available
@@ -87,7 +109,7 @@ def _handle_status() -> None:
     print(f"DB:          {status.db_path}")
     print(f"Routes:      {status.routes_path} ({status.routes_configured} configured)")
     if status.credentials_stored:
-        print(f"Credentials: {', '.join(status.credentials_stored)}")
+        print(f"Credentials: {_format_credentials(status)}")
     else:
         print("Credentials: none stored")
     if not status.running and status.mode == "none" and is_proxy_systemd_available():
