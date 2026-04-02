@@ -61,18 +61,18 @@ class TestCaptureCredentials:
         # Empty dir — no credential file to extract
         _capture_credentials("claude", tmp_path, "default")
 
-        out = capsys.readouterr().out
-        assert "Warning" in out
-        assert "claude" in out
-        assert "not captured" in out
+        err = capsys.readouterr().err
+        assert "Warning" in err
+        assert "claude" in err
+        assert "not captured" in err
 
     def test_unknown_provider_prints_warning(self, tmp_path: Path, capsys) -> None:
         """Unknown provider prints a warning mentioning the provider name."""
         _capture_credentials("unknown-agent", tmp_path, "default")
 
-        out = capsys.readouterr().out
-        assert "Warning" in out
-        assert "unknown-agent" in out
+        err = capsys.readouterr().err
+        assert "Warning" in err
+        assert "unknown-agent" in err
 
     def test_db_failure_prints_warning(self, tmp_path: Path, capsys) -> None:
         """If DB storage fails, prints warning but doesn't raise."""
@@ -82,9 +82,9 @@ class TestCaptureCredentials:
         with patch("terok_sandbox.SandboxConfig", side_effect=RuntimeError("DB broken")):
             _capture_credentials("claude", tmp_path, "default")
 
-        out = capsys.readouterr().out
-        assert "Warning" in out
-        assert "not saved" in out
+        err = capsys.readouterr().err
+        assert "Warning" in err
+        assert "not saved" in err
 
     def test_custom_credential_set(self, tmp_path: Path) -> None:
         """Credentials can be stored under a custom credential set."""
