@@ -268,10 +268,9 @@ class TestProxyCommandHandlers:
         assert "not running" in capsys.readouterr().out
 
     @patch("terok_agent.proxy_commands.scan_leaked_credentials", return_value=[])
-    @patch("terok_sandbox.SandboxConfig")
     @patch("terok_sandbox.is_proxy_systemd_available", return_value=False)
     @patch("terok_sandbox.get_proxy_status")
-    def test_status_prints_info(self, mock_status, _sd, _cfg, _scan, capsys) -> None:
+    def test_status_prints_info(self, mock_status, _sd, _scan, capsys) -> None:
         """status prints formatted proxy info."""
         mock_status.return_value = MagicMock(
             mode="daemon",
@@ -339,10 +338,9 @@ class TestProxyCommandHandlers:
         "terok_agent.proxy_commands.scan_leaked_credentials",
         return_value=[("claude", Path("/envs/_claude-config/.credentials.json"))],
     )
-    @patch("terok_sandbox.SandboxConfig")
     @patch("terok_sandbox.is_proxy_systemd_available", return_value=False)
     @patch("terok_sandbox.get_proxy_status")
-    def test_status_shows_leak_warning(self, mock_status, _sd, _cfg, _scan, capsys) -> None:
+    def test_status_shows_leak_warning(self, mock_status, _sd, _scan, capsys) -> None:
         """status shows WARNING when leaked credentials detected."""
         mock_status.return_value = MagicMock(
             mode="daemon",
@@ -637,10 +635,24 @@ class TestToProxyRoute:
 class TestEnsureProxyRoutes:
     """Verify ensure_proxy_routes writes routes.json to disk."""
 
-    def test_writes_routes_json(self, tmp_path, monkeypatch):
+    def test_writes_routes_json(self, tmp_path):
         """ensure_proxy_routes() creates a valid routes.json file."""
-        from unittest.mock import MagicMock
+        mock_cfg = MagicMock()
+        mock_cfg.proxy_routes_path = tmp_path / "proxy" / "routes.json"
 
+        from terok_agent.roster import ensure_proxy_routes
+
+        path = ensure_proxy_routes(cfg=mock_cfg)
+
+        assert path == mock_cfg.proxy_routes_path
+        assert path.is_file()
+        routes = json.loads(path.read_text())
+        # Should have at least claude route from the YAML roster
+        assert "claude" in routes
+        assert "upstream" in routes["claude"]
+
+    def test_falls_back_to_default_config(self, tmp_path, monkeypatch):
+        """ensure_proxy_routes(cfg=None) creates a SandboxConfig with standalone defaults."""
         import terok_sandbox
 
         mock_cfg = MagicMock()
@@ -650,10 +662,17 @@ class TestEnsureProxyRoutes:
         from terok_agent.roster import ensure_proxy_routes
 
         path = ensure_proxy_routes()
-
-        assert path == mock_cfg.proxy_routes_path
         assert path.is_file()
-        routes = json.loads(path.read_text())
-        # Should have at least claude route from the YAML roster
-        assert "claude" in routes
-        assert "upstream" in routes["claude"]
+
+
+class TestProxyHandlerCfgSignatures:
+    """All proxy command handlers accept a ``cfg`` keyword argument."""
+
+    def test_all_handlers_accept_cfg(self) -> None:
+        import inspect
+
+        from terok_agent.proxy_commands import PROXY_COMMANDS
+
+        for cmd in PROXY_COMMANDS:
+            sig = inspect.signature(cmd.handler)
+            assert "cfg" in sig.parameters, f"{cmd.handler.__name__} missing cfg param"

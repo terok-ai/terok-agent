@@ -28,6 +28,8 @@ from typing import TYPE_CHECKING
 from .config_stack import deep_merge
 
 if TYPE_CHECKING:
+    from terok_sandbox import SandboxConfig
+
     from .auth import AuthProvider
     from .headless_providers import HeadlessProvider, OpenCodeProviderConfig
 
@@ -562,18 +564,20 @@ def get_roster() -> AgentRoster:
     return load_roster()
 
 
-def ensure_proxy_routes() -> Path:
+def ensure_proxy_routes(cfg: SandboxConfig | None = None) -> Path:
     """Generate ``routes.json`` from the YAML roster and write it to disk.
 
     The routes file is written to the path configured in
     :class:`~terok_sandbox.SandboxConfig` (typically
     ``~/.local/share/terok/proxy/routes.json``).
 
+    When *cfg* is ``None``, falls back to standalone defaults.
+
     Returns the path to the written file.
     """
     from terok_sandbox import SandboxConfig
 
-    cfg = SandboxConfig()
+    cfg = cfg or SandboxConfig()
     path = cfg.proxy_routes_path
     import os
     import tempfile

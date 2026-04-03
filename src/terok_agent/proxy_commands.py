@@ -12,37 +12,41 @@ from __future__ import annotations
 
 import sys
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from terok_sandbox import CommandDef
 
+if TYPE_CHECKING:
+    from terok_sandbox import SandboxConfig
 
-def _ensure_routes() -> Path:
+
+def _ensure_routes(cfg: SandboxConfig | None = None) -> Path:
     """Generate routes.json from the YAML agent roster."""
     from .roster import ensure_proxy_routes
 
-    return ensure_proxy_routes()
+    return ensure_proxy_routes(cfg=cfg)
 
 
-def _handle_start() -> None:
+def _handle_start(*, cfg: SandboxConfig | None = None) -> None:
     """Generate routes and start the credential proxy daemon."""
     from terok_sandbox import is_proxy_running, start_proxy
 
-    if is_proxy_running():
+    if is_proxy_running(cfg=cfg):
         print("Credential proxy is already running.")
         sys.exit(1)
-    _ensure_routes()
-    start_proxy()
+    _ensure_routes(cfg=cfg)
+    start_proxy(cfg=cfg)
     print("Credential proxy started.")
 
 
-def _handle_stop() -> None:
+def _handle_stop(*, cfg: SandboxConfig | None = None) -> None:
     """Stop the credential proxy daemon."""
     from terok_sandbox import is_proxy_running, stop_proxy
 
-    if not is_proxy_running():
+    if not is_proxy_running(cfg=cfg):
         print("Credential proxy is not running.")
         return
-    stop_proxy()
+    stop_proxy(cfg=cfg)
     print("Credential proxy stopped.")
 
 
@@ -132,13 +136,13 @@ def _format_credentials(status: object) -> str:
         return ", ".join(st.credentials_stored)
 
 
-def _handle_status() -> None:
+def _handle_status(*, cfg: SandboxConfig | None = None) -> None:
     """Show credential proxy status."""
     from terok_sandbox import get_proxy_status, is_proxy_systemd_available
 
     from .paths import mounts_dir
 
-    status = get_proxy_status()
+    status = get_proxy_status(cfg=cfg)
     state = "running" if status.running else "stopped"
     print(f"Mode:        {status.mode}")
     print(f"Status:      {state}")
@@ -161,7 +165,7 @@ def _handle_status() -> None:
         print("Run 'clean' to remove them.")
 
 
-def _handle_install() -> None:
+def _handle_install(*, cfg: SandboxConfig | None = None) -> None:
     """Generate routes and install systemd socket activation."""
     from terok_sandbox import install_proxy_systemd, is_proxy_systemd_available
 
@@ -171,30 +175,30 @@ def _handle_install() -> None:
             "Use 'start' to run the proxy without systemd."
         )
         sys.exit(1)
-    _ensure_routes()
-    install_proxy_systemd()
+    _ensure_routes(cfg=cfg)
+    install_proxy_systemd(cfg=cfg)
     print("Credential proxy systemd socket installed and started.")
 
 
-def _handle_uninstall() -> None:
+def _handle_uninstall(*, cfg: SandboxConfig | None = None) -> None:
     """Remove credential proxy systemd units."""
     from terok_sandbox import is_proxy_systemd_available, uninstall_proxy_systemd
 
     if not is_proxy_systemd_available():
         print("Error: systemd user services are not available. Nothing to uninstall.")
         sys.exit(1)
-    uninstall_proxy_systemd()
+    uninstall_proxy_systemd(cfg=cfg)
     print("Credential proxy systemd units removed.")
 
 
-def _handle_routes() -> None:
+def _handle_routes(*, cfg: SandboxConfig | None = None) -> None:
     """Regenerate routes.json from the YAML agent roster."""
-    path = _ensure_routes()
+    path = _ensure_routes(cfg=cfg)
     if path:
         print(f"Routes written to {path}")
 
 
-def _handle_clean() -> None:
+def _handle_clean(*, cfg: SandboxConfig | None = None) -> None:  # noqa: ARG001
     """Remove leaked credential files from shared config mounts."""
     from .paths import mounts_dir
 
