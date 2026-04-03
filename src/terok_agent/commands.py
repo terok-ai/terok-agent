@@ -308,7 +308,7 @@ RUN_TOOL_COMMAND = CommandDef(
         ArgDef(name="--no-gate", action="store_true", help="Disable gate"),
         ArgDef(name="--name", help="Container name override"),
         ArgDef(name="--timeout", type=int, default=600, help="Timeout in seconds (default: 600)"),
-        ArgDef(name="--", dest="tool_args", nargs="*", help="Extra args passed to the tool"),
+        ArgDef(name="tool_args", nargs="*", help="Extra args passed to the tool (after --)"),
     ),
 )
 
