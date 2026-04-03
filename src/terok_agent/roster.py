@@ -577,7 +577,8 @@ def ensure_proxy_routes(cfg: SandboxConfig | None = None) -> Path:
     """
     from terok_sandbox import SandboxConfig
 
-    cfg = cfg or SandboxConfig()
+    if cfg is None:
+        cfg = SandboxConfig()
     path = cfg.proxy_routes_path
     import os
     import tempfile
