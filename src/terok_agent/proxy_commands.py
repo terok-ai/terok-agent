@@ -125,6 +125,10 @@ def _format_credentials(status: object) -> str:
             db.close()
         return ", ".join(parts)
     except Exception:  # noqa: BLE001
+        print(
+            "Warning [proxy]: credential type lookup failed; showing names only",
+            file=sys.stderr,
+        )
         return ", ".join(st.credentials_stored)
 
 
