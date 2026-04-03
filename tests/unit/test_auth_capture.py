@@ -9,7 +9,12 @@ import json
 from pathlib import Path
 from unittest.mock import patch
 
-from terok_agent.auth import _capture_credentials, store_api_key
+from terok_agent.auth import (
+    PHANTOM_CREDENTIALS_MARKER,
+    _capture_credentials,
+    _write_claude_credentials_file,
+    store_api_key,
+)
 
 
 class TestCaptureCredentials:
@@ -96,6 +101,122 @@ class TestCaptureCredentials:
         stored = db.load_credential("work-project", "kisski")
         db.close()
         assert stored["key"] == "work-key"
+
+
+class TestWriteClaudeCredentialsFile:
+    """Verify _write_claude_credentials_file produces the correct static file."""
+
+    def test_writes_phantom_token(self, tmp_path: Path) -> None:
+        """Written file has the phantom marker as accessToken, not real credentials."""
+        cred_data = {
+            "type": "oauth",
+            "scopes": "user:inference user:profile",
+            "subscription_type": "max",
+            "rate_limit_tier": "max_5x",
+        }
+        _write_claude_credentials_file(cred_data, tmp_path)
+
+        cred_file = tmp_path / "_claude-config" / ".credentials.json"
+        assert cred_file.is_file()
+        data = json.loads(cred_file.read_text())
+        oauth = data["claudeAiOauth"]
+        assert oauth["accessToken"] == PHANTOM_CREDENTIALS_MARKER
+        assert oauth["refreshToken"] == ""
+        assert oauth["expiresAt"] is None
+
+    def test_includes_subscription_metadata(self, tmp_path: Path) -> None:
+        """Written file preserves scopes, subscriptionType, and rateLimitTier."""
+        cred_data = {
+            "scopes": "user:inference user:profile",
+            "subscription_type": "max",
+            "rate_limit_tier": "max_5x",
+        }
+        _write_claude_credentials_file(cred_data, tmp_path)
+
+        data = json.loads((tmp_path / "_claude-config" / ".credentials.json").read_text())
+        oauth = data["claudeAiOauth"]
+        assert oauth["scopes"] == "user:inference user:profile"
+        assert oauth["subscriptionType"] == "max"
+        assert oauth["rateLimitTier"] == "max_5x"
+
+    def test_missing_metadata_defaults(self, tmp_path: Path) -> None:
+        """Missing subscription fields default to empty/None in the written file."""
+        _write_claude_credentials_file({"type": "oauth"}, tmp_path)
+
+        data = json.loads((tmp_path / "_claude-config" / ".credentials.json").read_text())
+        oauth = data["claudeAiOauth"]
+        assert oauth["scopes"] == ""
+        assert oauth["subscriptionType"] is None
+        assert oauth["rateLimitTier"] is None
+
+    def test_creates_directory_if_absent(self, tmp_path: Path) -> None:
+        """Creates the _claude-config directory if it doesn't exist."""
+        target = tmp_path / "nested" / "mounts"
+        _write_claude_credentials_file({"type": "oauth"}, target)
+        assert (target / "_claude-config" / ".credentials.json").is_file()
+
+
+class TestCaptureWritesCredentialsFile:
+    """Verify _capture_credentials writes .credentials.json for Claude OAuth."""
+
+    def test_capture_claude_oauth_writes_credentials_file(self, tmp_path: Path) -> None:
+        """Capturing Claude OAuth triggers .credentials.json creation."""
+        cred = {
+            "claudeAiOauth": {
+                "accessToken": "sk-test-oauth",
+                "refreshToken": "rt-test",
+                "scopes": "user:inference",
+                "subscriptionType": "pro",
+            }
+        }
+        (tmp_path / ".credentials.json").write_text(json.dumps(cred))
+
+        db_path = tmp_path / "proxy" / "credentials.db"
+        mounts = tmp_path / "mounts"
+        with (
+            patch("terok_sandbox.SandboxConfig") as mock_cfg_cls,
+            patch("terok_agent.paths.mounts_dir", return_value=mounts),
+        ):
+            mock_cfg_cls.return_value.proxy_db_path = db_path
+            _capture_credentials("claude", tmp_path, "default")
+
+        cred_file = mounts / "_claude-config" / ".credentials.json"
+        assert cred_file.is_file()
+        data = json.loads(cred_file.read_text())
+        assert data["claudeAiOauth"]["accessToken"] == PHANTOM_CREDENTIALS_MARKER
+        assert data["claudeAiOauth"]["subscriptionType"] == "pro"
+
+    def test_capture_claude_api_key_skips_credentials_file(self, tmp_path: Path) -> None:
+        """API key auth does NOT write .credentials.json (only OAuth needs it)."""
+        (tmp_path / "config.json").write_text(json.dumps({"api_key": "sk-ant-key"}))
+
+        db_path = tmp_path / "proxy" / "credentials.db"
+        mounts = tmp_path / "mounts"
+        with (
+            patch("terok_sandbox.SandboxConfig") as mock_cfg_cls,
+            patch("terok_agent.paths.mounts_dir", return_value=mounts),
+        ):
+            mock_cfg_cls.return_value.proxy_db_path = db_path
+            _capture_credentials("claude", tmp_path, "default")
+
+        assert not (mounts / "_claude-config" / ".credentials.json").exists()
+
+    def test_capture_non_claude_skips_credentials_file(self, tmp_path: Path) -> None:
+        """Non-Claude providers don't write .credentials.json even with OAuth."""
+        (tmp_path / "auth.json").write_text(
+            json.dumps({"tokens": {"access_token": "sk-oai", "refresh_token": "rt"}})
+        )
+
+        db_path = tmp_path / "proxy" / "credentials.db"
+        mounts = tmp_path / "mounts"
+        with (
+            patch("terok_sandbox.SandboxConfig") as mock_cfg_cls,
+            patch("terok_agent.paths.mounts_dir", return_value=mounts),
+        ):
+            mock_cfg_cls.return_value.proxy_db_path = db_path
+            _capture_credentials("codex", tmp_path, "default")
+
+        assert not (mounts / "_claude-config").exists()
 
 
 class TestStoreApiKey:

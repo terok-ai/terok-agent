@@ -73,6 +73,9 @@ def extract_claude_oauth(base_dir: Path) -> dict:
                     "access_token": access_token,
                     "refresh_token": oauth.get("refreshToken", ""),
                     "expires_at": expires_at,
+                    "scopes": oauth.get("scopes", ""),
+                    "subscription_type": oauth.get("subscriptionType"),
+                    "rate_limit_tier": oauth.get("rateLimitTier"),
                 }
 
     # Fall back to API key (config.json)

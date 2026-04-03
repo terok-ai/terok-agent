@@ -362,6 +362,151 @@ class TestProxyCommandHandlers:
         assert "clean" in out
 
 
+class TestInjectedCredentialsFile:
+    """Verify _is_injected_credentials_file detects phantom vs real credentials."""
+
+    def test_recognises_injected_file(self, tmp_path: Path) -> None:
+        """Correctly identifies a terok-injected .credentials.json."""
+        from terok_agent.auth import PHANTOM_CREDENTIALS_MARKER
+        from terok_agent.proxy_commands import _is_injected_credentials_file
+
+        cred = {
+            "claudeAiOauth": {
+                "accessToken": PHANTOM_CREDENTIALS_MARKER,
+                "refreshToken": "",
+                "scopes": "user:inference user:profile",
+                "subscriptionType": "max",
+            }
+        }
+        cred_file = tmp_path / ".credentials.json"
+        cred_file.write_text(json.dumps(cred))
+        assert _is_injected_credentials_file(cred_file) is True
+
+    def test_rejects_real_credentials(self, tmp_path: Path) -> None:
+        """Real OAuth tokens are NOT identified as injected."""
+        from terok_agent.proxy_commands import _is_injected_credentials_file
+
+        cred = {"claudeAiOauth": {"accessToken": "sk-ant-real-token", "refreshToken": "rt-real"}}
+        cred_file = tmp_path / ".credentials.json"
+        cred_file.write_text(json.dumps(cred))
+        assert _is_injected_credentials_file(cred_file) is False
+
+    def test_rejects_phantom_token_with_refresh(self, tmp_path: Path) -> None:
+        """Phantom accessToken with a non-empty refreshToken is suspicious — flag it."""
+        from terok_agent.auth import PHANTOM_CREDENTIALS_MARKER
+        from terok_agent.proxy_commands import _is_injected_credentials_file
+
+        cred = {
+            "claudeAiOauth": {
+                "accessToken": PHANTOM_CREDENTIALS_MARKER,
+                "refreshToken": "rt-leaked-somehow",
+            }
+        }
+        cred_file = tmp_path / ".credentials.json"
+        cred_file.write_text(json.dumps(cred))
+        assert _is_injected_credentials_file(cred_file) is False
+
+    def test_handles_malformed_json(self, tmp_path: Path) -> None:
+        """Malformed JSON falls through to False (treat as potential leak)."""
+        from terok_agent.proxy_commands import _is_injected_credentials_file
+
+        cred_file = tmp_path / ".credentials.json"
+        cred_file.write_text("{not valid json")
+        assert _is_injected_credentials_file(cred_file) is False
+
+    def test_handles_missing_file(self, tmp_path: Path) -> None:
+        """Missing file returns False."""
+        from terok_agent.proxy_commands import _is_injected_credentials_file
+
+        assert _is_injected_credentials_file(tmp_path / "nonexistent.json") is False
+
+    def test_handles_non_dict_oauth_section(self, tmp_path: Path) -> None:
+        """Non-dict claudeAiOauth returns False."""
+        from terok_agent.proxy_commands import _is_injected_credentials_file
+
+        cred_file = tmp_path / ".credentials.json"
+        cred_file.write_text(json.dumps({"claudeAiOauth": "not a dict"}))
+        assert _is_injected_credentials_file(cred_file) is False
+
+
+class TestScanSkipsInjectedFile:
+    """Verify scan_leaked_credentials skips terok-injected .credentials.json."""
+
+    def test_skips_injected_credentials(self, tmp_path: Path) -> None:
+        """Injected phantom credentials are NOT flagged as leaked."""
+        from terok_agent import get_roster
+        from terok_agent.auth import PHANTOM_CREDENTIALS_MARKER
+        from terok_agent.proxy_commands import scan_leaked_credentials
+
+        roster = get_roster()
+        auth = roster.auth_providers["claude"]
+        route = roster.proxy_routes["claude"]
+
+        cred_dir = tmp_path / auth.host_dir_name
+        cred_dir.mkdir()
+        cred = {
+            "claudeAiOauth": {
+                "accessToken": PHANTOM_CREDENTIALS_MARKER,
+                "refreshToken": "",
+                "subscriptionType": "max",
+            }
+        }
+        (cred_dir / route.credential_file).write_text(json.dumps(cred))
+
+        assert scan_leaked_credentials(tmp_path) == []
+
+    def test_still_detects_real_credentials(self, tmp_path: Path) -> None:
+        """Real OAuth tokens are still flagged even when file structure matches."""
+        from terok_agent import get_roster
+        from terok_agent.proxy_commands import scan_leaked_credentials
+
+        roster = get_roster()
+        auth = roster.auth_providers["claude"]
+        route = roster.proxy_routes["claude"]
+
+        cred_dir = tmp_path / auth.host_dir_name
+        cred_dir.mkdir()
+        cred = {"claudeAiOauth": {"accessToken": "sk-ant-real", "refreshToken": "rt-real"}}
+        (cred_dir / route.credential_file).write_text(json.dumps(cred))
+
+        leaked = scan_leaked_credentials(tmp_path)
+        assert len(leaked) == 1
+        assert leaked[0][0] == "claude"
+
+
+class TestCleanSkipsInjectedFile:
+    """Verify the clean handler preserves injected .credentials.json."""
+
+    def test_clean_preserves_injected_file(self, tmp_path: Path) -> None:
+        """Clean removes real leaks but preserves injected phantom credentials."""
+        from unittest.mock import patch
+
+        from terok_agent import get_roster
+        from terok_agent.auth import PHANTOM_CREDENTIALS_MARKER
+        from terok_agent.proxy_commands import _handle_clean
+
+        roster = get_roster()
+        auth = roster.auth_providers["claude"]
+        route = roster.proxy_routes["claude"]
+
+        cred_dir = tmp_path / auth.host_dir_name
+        cred_dir.mkdir()
+        cred = {
+            "claudeAiOauth": {
+                "accessToken": PHANTOM_CREDENTIALS_MARKER,
+                "refreshToken": "",
+            }
+        }
+        cred_file = cred_dir / route.credential_file
+        cred_file.write_text(json.dumps(cred))
+
+        with patch("terok_agent.paths.mounts_dir", return_value=tmp_path):
+            _handle_clean()
+
+        # Injected file should still exist
+        assert cred_file.is_file()
+
+
 class TestFormatCredentials:
     """Verify _format_credentials() type-annotated status display."""
 

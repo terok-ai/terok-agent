@@ -46,6 +46,32 @@ def _handle_stop() -> None:
     print("Credential proxy stopped.")
 
 
+def _is_injected_credentials_file(path: Path) -> bool:
+    """Check whether *path* is a terok-injected ``.credentials.json``.
+
+    Returns ``True`` only when **all** of these hold:
+
+    - ``claudeAiOauth.accessToken`` equals :data:`PHANTOM_CREDENTIALS_MARKER`
+    - ``claudeAiOauth.refreshToken`` is empty or absent
+
+    Any parse error or unexpected structure → ``False`` (treat as real leak).
+    """
+    import json
+
+    from .auth import PHANTOM_CREDENTIALS_MARKER
+
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        oauth = data.get("claudeAiOauth", {})
+        if not isinstance(oauth, dict):
+            return False
+        return oauth.get("accessToken") == PHANTOM_CREDENTIALS_MARKER and not oauth.get(
+            "refreshToken"
+        )
+    except (json.JSONDecodeError, OSError, ValueError):
+        return False
+
+
 def scan_leaked_credentials(mounts_base: Path) -> list[tuple[str, Path]]:
     """Return ``(provider, host_path)`` for credential files found in shared mounts.
 
@@ -53,6 +79,9 @@ def scan_leaked_credentials(mounts_base: Path) -> list[tuple[str, Path]]:
     proxy's sqlite DB — not in the shared config directories that get mounted
     into containers.  This function checks each routed provider's mount for
     credential files that would leak real tokens alongside phantom ones.
+
+    Files injected by :func:`~terok_agent.auth._write_claude_credentials_file`
+    are recognised by their dummy ``accessToken`` marker and skipped.
     """
     from .roster import get_roster
 
@@ -66,7 +95,11 @@ def scan_leaked_credentials(mounts_base: Path) -> list[tuple[str, Path]]:
             continue
         try:
             path = mounts_base / auth.host_dir_name / route.credential_file
-            if path.is_file() and path.stat().st_size > 0:
+            if (
+                path.is_file()
+                and path.stat().st_size > 0
+                and not _is_injected_credentials_file(path)
+            ):
                 leaked.append((name, path))
         except (OSError, TypeError):
             continue

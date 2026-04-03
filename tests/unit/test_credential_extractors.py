@@ -40,6 +40,33 @@ class TestClaudeOAuth:
         assert result["type"] == "oauth"
         assert result["expires_at"] == 1700000000  # seconds value kept as-is
 
+    def test_extracts_subscription_metadata(self, tmp_path: Path) -> None:
+        """OAuth extraction captures scopes, subscriptionType, and rateLimitTier."""
+        cred = {
+            "claudeAiOauth": {
+                "accessToken": "sk-ant-meta-test",
+                "refreshToken": "rt-meta",
+                "expiresAt": 1700000000,
+                "scopes": "user:inference user:profile",
+                "subscriptionType": "max",
+                "rateLimitTier": "max_5x",
+            }
+        }
+        (tmp_path / ".credentials.json").write_text(json.dumps(cred))
+        result = extract_claude_oauth(tmp_path)
+        assert result["scopes"] == "user:inference user:profile"
+        assert result["subscription_type"] == "max"
+        assert result["rate_limit_tier"] == "max_5x"
+
+    def test_missing_subscription_metadata_defaults(self, tmp_path: Path) -> None:
+        """Missing subscription fields default to empty/None."""
+        cred = {"claudeAiOauth": {"accessToken": "sk-ant-no-meta", "refreshToken": "rt"}}
+        (tmp_path / ".credentials.json").write_text(json.dumps(cred))
+        result = extract_claude_oauth(tmp_path)
+        assert result["scopes"] == ""
+        assert result["subscription_type"] is None
+        assert result["rate_limit_tier"] is None
+
     def test_converts_ms_expires_at_to_seconds(self, tmp_path: Path) -> None:
         """expiresAt from Claude Code (JS ms timestamp) is converted to POSIX seconds."""
         expires_at_ms = 1_700_000_000_000  # realistic Claude Code value (ms)

@@ -77,6 +77,7 @@ path = "terok_agent.auth"
 depends_on = [
     "terok_agent._util",
     "terok_agent.credential_extractors",
+    "terok_agent.paths",
 ]
 
 # Post-auth shared config patching (proxy URL writes)
@@ -124,6 +125,7 @@ depends_on = [
 [[modules]]
 path = "terok_agent.proxy_commands"
 depends_on = [
+    "terok_agent.auth",
     "terok_agent.paths",
     "terok_agent.roster",
 ]
