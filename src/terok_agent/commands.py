@@ -109,7 +109,6 @@ def _handle_run(
     name: str | None = None,
     restricted: bool = False,
     gpu: bool = False,
-    bypass_shield_no_protection: bool = False,
 ) -> None:
     """Run an agent in a hardened container."""
     from .runner import AgentRunner
@@ -122,7 +121,6 @@ def _handle_run(
         "branch": branch,
         "unrestricted": not restricted,
         "gpu": gpu,
-        "bypass_shield": bypass_shield_no_protection,
     }
 
     if web:
@@ -225,11 +223,6 @@ RUN_COMMAND = CommandDef(
             help="Restrict agent permissions (no auto-approve, no-new-privileges)",
         ),
         ArgDef(name="--gpu", action="store_true", help="Enable GPU passthrough"),
-        ArgDef(
-            name="--bypass-shield-no-protection",
-            action="store_true",
-            help="DANGEROUS: disable egress firewall entirely",
-        ),
     ),
 )
 

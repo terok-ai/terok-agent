@@ -143,19 +143,6 @@ class TestAgentRunner:
         spec = sandbox.run.call_args[0][0]
         assert spec.gpu_enabled is True
 
-    def test_bypass_shield_sets_flag(self, tmp_path: Path) -> None:
-        """Bypass shield flag propagates to RunSpec."""
-        sandbox = _mock_sandbox()
-        runner = AgentRunner(sandbox=sandbox)
-
-        with patch.object(runner, "_ensure_images", return_value="terok-l1-cli:test"):
-            runner.run_headless(
-                "claude", str(tmp_path), prompt="test", follow=False, bypass_shield=True
-            )
-
-        spec = sandbox.run.call_args[0][0]
-        assert spec.bypass_shield is True
-
     def test_run_interactive_command(self, tmp_path: Path) -> None:
         """Interactive mode includes init-ssh-and-repo.sh in command."""
         sandbox = _mock_sandbox()

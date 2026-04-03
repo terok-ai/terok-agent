@@ -350,7 +350,6 @@ class AgentRunner:
         extra_args: list[str] | None = None,
         unrestricted: bool = True,
         gpu: bool = False,
-        bypass_shield: bool = False,
         hooks: LifecycleHooks | None = None,
     ) -> str:
         """Delegate container launch to :meth:`Sandbox.run`. Returns container name.
@@ -374,7 +373,6 @@ class AgentRunner:
             gpu_enabled=gpu,
             extra_args=tuple(extra_args or ()),
             unrestricted=unrestricted,
-            bypass_shield=bypass_shield,
         )
 
         try:
@@ -399,7 +397,6 @@ class AgentRunner:
         follow: bool = False,
         unrestricted: bool = True,
         gpu: bool = False,
-        bypass_shield: bool = False,
         hooks: LifecycleHooks | None = None,
     ) -> str:
         """Launch a headless agent run. Returns container name.
@@ -422,7 +419,6 @@ class AgentRunner:
             mode="headless",
             unrestricted=unrestricted,
             gpu=gpu,
-            bypass_shield=bypass_shield,
             hooks=hooks,
         )
 
@@ -436,7 +432,6 @@ class AgentRunner:
         name: str | None = None,
         unrestricted: bool = True,
         gpu: bool = False,
-        bypass_shield: bool = False,
         hooks: LifecycleHooks | None = None,
     ) -> str:
         """Launch an interactive container. Returns container name.
@@ -452,7 +447,6 @@ class AgentRunner:
             mode="interactive",
             unrestricted=unrestricted,
             gpu=gpu,
-            bypass_shield=bypass_shield,
             hooks=hooks,
         )
 
@@ -467,7 +461,6 @@ class AgentRunner:
         public_url: str | None = None,
         unrestricted: bool = True,
         gpu: bool = False,
-        bypass_shield: bool = False,
         hooks: LifecycleHooks | None = None,
     ) -> str:
         """Launch a toad web container. Returns container name.
@@ -489,7 +482,6 @@ class AgentRunner:
             public_url=public_url,
             unrestricted=unrestricted,
             gpu=gpu,
-            bypass_shield=bypass_shield,
             hooks=hooks,
         )
 
@@ -511,7 +503,6 @@ class AgentRunner:
         public_url: str | None = None,
         unrestricted: bool = True,
         gpu: bool = False,
-        bypass_shield: bool = False,
         hooks: LifecycleHooks | None = None,
     ) -> str:
         """Unified launch flow for all three modes."""
@@ -611,7 +602,6 @@ class AgentRunner:
             extra_args=extra_args or None,
             unrestricted=unrestricted,
             gpu=gpu,
-            bypass_shield=bypass_shield,
             hooks=hooks,
         )
 
