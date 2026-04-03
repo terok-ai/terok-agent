@@ -40,15 +40,17 @@ class TestLoadBundledAgents:
         agents = _load_bundled_agents()
         expected = {
             "claude",
+            "coderabbit",
             "codex",
             "copilot",
-            "vibe",
+            "gh",
+            "glab",
             "blablador",
             "kisski",
             "opencode",
-            "gh",
-            "glab",
+            "sonar",
             "toad",
+            "vibe",
         }
         assert set(agents.keys()) == expected
 

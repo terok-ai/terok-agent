@@ -1,0 +1,22 @@
+# SPDX-FileCopyrightText: 2026 Jiri Vyskocil
+# SPDX-License-Identifier: Apache-2.0
+
+kind: tool
+label: SonarCloud
+binary: sonar-scanner
+
+credential_proxy:
+  route_prefix: sonar
+  upstream: https://sonarcloud.io
+  auth_header: Authorization
+  auth_prefix: "Bearer "
+  credential_type: api_key
+  phantom_env:
+    SONAR_TOKEN: true
+  base_url_env: SONAR_HOST_URL
+
+auth:
+  host_dir: _sonar-config
+  container_mount: /home/dev/.sonar
+  modes: [api_key]
+  api_key_hint: "Generate a token at https://sonarcloud.io/account/security"

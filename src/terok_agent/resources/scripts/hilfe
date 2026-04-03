@@ -41,6 +41,11 @@ _terok_agents() {
     printf '  \033[36mtoad\033[0m       - Multi-agent TUI (ACP)\n'
 }
 
+_terok_dev_tools() {
+    printf '\n\033[1mDev tools:\033[0m\n'
+    printf '  \033[36msonar-scanner\033[0m - SonarQube/SonarCloud static analysis (needs SONAR_TOKEN)\n'
+}
+
 _terok_notes() {
     printf '\n\033[1mterok container notes:\033[0m\n'
     printf '  - \033[36m/workspace\033[0m  main project git checkout for this task\n'
@@ -59,6 +64,7 @@ _terok_notes() {
 
 _terok_permission_mode
 _terok_agents
+_terok_dev_tools
 
 if [[ "$_mode" == "--kurz" ]]; then
     printf '\nRun \033[1mhilfe\033[0m for more container tips.\n\n'

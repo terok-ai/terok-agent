@@ -1,0 +1,26 @@
+# SPDX-FileCopyrightText: 2026 Jiri Vyskocil
+# SPDX-License-Identifier: Apache-2.0
+
+kind: tool
+label: CodeRabbit
+binary: coderabbit
+
+credential_proxy:
+  route_prefix: coderabbit
+  upstream: https://app.coderabbit.ai
+  auth_header: Authorization
+  auth_prefix: "Bearer "
+  credential_type: api_key
+  phantom_env:
+    CODERABBIT_API_KEY: true
+  # No base_url_env: the CLI has no API endpoint override.  It does
+  # honour HTTPS_PROXY, but the credential proxy is a reverse proxy
+  # (route-prefix), not a forward proxy (CONNECT tunnel).
+  # Phantom tokens cannot reach the upstream without proxy routing.
+  # Binary not shipped in L1; sidecar architecture under consideration.
+
+auth:
+  host_dir: _coderabbit-config
+  container_mount: /home/dev/.coderabbit
+  modes: [api_key]
+  api_key_hint: "Get your API key from https://app.coderabbit.ai/settings"
