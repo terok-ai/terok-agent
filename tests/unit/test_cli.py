@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 from io import StringIO
+from pathlib import Path
 from unittest.mock import patch
 
 import pytest
@@ -102,6 +103,36 @@ class TestSharedDirArgs:
                 break
         else:
             pytest.fail("--shared-mount not found in RUN_COMMAND args")
+
+    def test_handle_run_forwards_shared_dir(self) -> None:
+        """_handle_run passes shared_dir to runner, omits shared_mount when no dir."""
+        from terok_agent.commands import _handle_run
+
+        with patch("terok_agent.runner.AgentRunner") as mock_cls:
+            mock_runner = mock_cls.return_value
+            mock_runner.run_headless.return_value = "terok-agent-test"
+            _handle_run(
+                agent="claude",
+                repo=".",
+                prompt="test",
+                shared_dir="/tmp/terok-testing/shared",
+                shared_mount="/data",
+            )
+        call_kwargs = mock_runner.run_headless.call_args
+        assert call_kwargs.kwargs["shared_dir"] == Path("/tmp/terok-testing/shared")
+        assert call_kwargs.kwargs["shared_mount"] == "/data"
+
+    def test_handle_run_omits_shared_mount_when_no_dir(self) -> None:
+        """_handle_run omits shared_mount from common dict when shared_dir is None."""
+        from terok_agent.commands import _handle_run
+
+        with patch("terok_agent.runner.AgentRunner") as mock_cls:
+            mock_runner = mock_cls.return_value
+            mock_runner.run_headless.return_value = "terok-agent-test"
+            _handle_run(agent="claude", repo=".", prompt="test")
+        call_kwargs = mock_runner.run_headless.call_args
+        assert call_kwargs.kwargs["shared_dir"] is None
+        assert "shared_mount" not in call_kwargs.kwargs
 
 
 class TestResolveHostGitIdentity:
