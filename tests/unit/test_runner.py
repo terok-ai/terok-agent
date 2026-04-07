@@ -221,6 +221,41 @@ class TestAgentRunner:
                 shared_mount="relative/path",
             )
 
+    def test_shared_mount_rejects_colon(self, tmp_path: Path) -> None:
+        """shared_mount containing ':' is rejected (volume spec injection)."""
+        sandbox = _mock_sandbox()
+        runner = AgentRunner(sandbox=sandbox)
+        with (
+            patch.object(runner, "_ensure_images", return_value="terok-l1-cli:test"),
+            pytest.raises(SystemExit, match="':'"),
+        ):
+            runner.run_headless(
+                "claude",
+                str(tmp_path),
+                prompt="test",
+                follow=False,
+                shared_dir=tmp_path / "ipc",
+                shared_mount="/data:ro",
+            )
+
+    def test_shared_dir_file_rejected(self, tmp_path: Path) -> None:
+        """shared_dir that exists as a file is rejected."""
+        sandbox = _mock_sandbox()
+        runner = AgentRunner(sandbox=sandbox)
+        existing_file = tmp_path / "not-a-dir"
+        existing_file.touch()
+        with (
+            patch.object(runner, "_ensure_images", return_value="terok-l1-cli:test"),
+            pytest.raises(SystemExit, match="exists as a file"),
+        ):
+            runner.run_headless(
+                "claude",
+                str(tmp_path),
+                prompt="test",
+                follow=False,
+                shared_dir=existing_file,
+            )
+
     def test_shared_dir_in_container_env(self, tmp_path: Path) -> None:
         """shared_dir kwarg produces TEROK_SHARED_DIR and a volume mount."""
         sandbox = _mock_sandbox()
