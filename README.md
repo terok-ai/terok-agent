@@ -2,10 +2,14 @@
 
 Single-agent task runner for hardened Podman containers.
 
+## What it does
+
 **terok-agent** builds container images, launches instrumented Podman
 containers, and manages the lifecycle of one AI coding agent at a time.
-Designed for standalone use (`terok-agent run claude .`) and as a library
-for [terok](https://github.com/terok-ai/terok) project orchestration.
+Every container runs rootless behind an egress firewall with credential
+isolation — real API keys and SSH private keys never enter the container.
+Use it standalone from the CLI or as a Python library for
+[terok](https://github.com/terok-ai/terok) orchestration.
 
 ## Ecosystem
 
@@ -18,31 +22,17 @@ terok           project orchestration (TUI, presets, multi-agent)
 
 Each layer depends only on the one below it.
 
-## Installation
-
-```bash
-pip install terok-agent
-```
-
-Requires Python 3.12+ and Podman (rootless).
-
 ## Quick start
 
 ```bash
-# Build L0 (base) + L1 (agent CLI) images
-terok-agent build
+pip install terok-agent        # requires Python 3.12+, Podman (rootless)
 
-# Authenticate with a provider
-terok-agent auth claude
+terok-agent build              # build base + agent images
+terok-agent auth claude        # authenticate (OAuth or API key)
 
-# Run an agent — headless with a prompt
 terok-agent run claude . -p "Fix the failing test in test_auth.py"
-
-# Run interactively (user logs into the container)
-terok-agent run claude . --interactive
-
-# Run toad web UI
-terok-agent run claude . --web
+terok-agent run claude . --interactive   # shell into the container
+terok-agent run claude . --web           # toad web UI
 ```
 
 ## Commands
@@ -52,41 +42,34 @@ terok-agent run claude . --web
 | `run` | Run an agent in a hardened container (headless, interactive, or web) |
 | `auth` | Authenticate a provider (OAuth, API key, or `--api-key` direct) |
 | `agents` | List registered agents (`--all` includes tools like gh, glab) |
-| `build` | Build L0+L1 container images |
-| `run-tool` | Run a sidecar tool (e.g. CodeRabbit) |
+| `build` | Build base + agent container images |
+| `run-tool` | Run a sidecar tool (e.g. CodeRabbit, SonarCloud) |
 | `ls` | List running terok-agent containers |
 | `stop` | Stop a running container |
-| `proxy start\|stop\|status\|install\|uninstall\|routes\|clean` | Credential proxy management |
+| `proxy` | Credential proxy management (start, stop, status, install, routes) |
 
 ## Supported agents
 
-| Agent | Type | Auth | Description |
-|-------|------|------|-------------|
-| Claude | native | OAuth, API key | Anthropic Claude Code |
-| Codex | native | OAuth, API key | OpenAI Codex CLI |
-| Vibe | native | API key | Mistral Vibe |
-| Copilot | native | — | GitHub Copilot (no proxy yet) |
-| Blablador | OpenCode | API key | Helmholtz Blablador |
-| KISSKI | OpenCode | API key | KISSKI (AcademicCloud) |
-| gh | tool | OAuth, API key | GitHub CLI |
-| glab | tool | API key | GitLab CLI |
-| CodeRabbit | tool | API key | CodeRabbit (sidecar) |
-| SonarCloud | tool | API key | SonarCloud scanner |
+| Agent | Auth | Description |
+|-------|------|-------------|
+| Claude | OAuth, API key | Anthropic Claude Code |
+| Codex | OAuth, API key | OpenAI Codex CLI |
+| Vibe | API key | Mistral Vibe |
+| Copilot | — | GitHub Copilot |
+| Blablador | API key | Helmholtz Blablador (OpenCode) |
+| KISSKI | API key | KISSKI AcademicCloud (OpenCode) |
+| gh | OAuth, API key | GitHub CLI |
+| glab | API key | GitLab CLI |
+| CodeRabbit | API key | CodeRabbit (sidecar tool) |
+| SonarCloud | API key | SonarCloud scanner (sidecar tool) |
 
-User-defined agents go in `~/.config/terok/agent/agents/` as YAML files.
+## Documentation
 
-## Security
-
-- **Egress firewall** — gate is on by default; agents cannot reach the
-  internet except through allowed domains
-- **Credential proxy** — no real API keys or SSH private keys enter
-  containers; phantom tokens are resolved host-side by the credential
-  proxy and SSH agent proxy in
-  [terok-sandbox](https://terok-ai.github.io/terok-sandbox/)
-  (see [Credential Proxy](https://terok-ai.github.io/terok-agent/credential-proxy/))
-- **Restricted mode** (`--restricted`) — disables auto-approve and sets
-  `--no-new-privileges`
-- **Rootless Podman** — containers run without root privileges
+- [Getting started](https://terok-ai.github.io/terok-agent/) — install, build, authenticate, first run
+- [Agents](https://terok-ai.github.io/terok-agent/agents/) — catalog, custom definitions, auth flows
+- [Launch modes](https://terok-ai.github.io/terok-agent/launch-modes/) — headless, interactive, web, tool
+- [Security](https://terok-ai.github.io/terok-agent/security/) — firewall, credential proxy, restricted mode
+- [API Reference](https://terok-ai.github.io/terok-agent/reference/) — Python API docs
 
 ## Development
 

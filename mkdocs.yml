@@ -54,10 +54,12 @@ plugins:
       quality_report: true
       quality_report_path: quality_report.md
       quality_report_codecov_repo: terok-ai/terok-agent
+      module_map: true
+      module_map_path: module-map.md
       ref_pages: true
       ref_pages_path: reference
   - literate-nav:
-      nav_file: SUMMARY.md
+      nav_file: summary.md
   - section-index
 
 markdown_extensions:
@@ -79,13 +81,6 @@ markdown_extensions:
   - tables
   - toc:
       permalink: true
-
-nav:
-  - Home: index.md
-  - Developer Guide:
-    - Code Quality Report: quality_report.md
-    - CI Workflow Map: ci_map.md
-  - API Reference: reference/
 
 extra:
   social:

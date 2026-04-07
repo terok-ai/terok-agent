@@ -1,100 +1,64 @@
-# terok-agent
+# Getting started
 
-Single-agent task runner for hardened Podman containers.
+## Why terok-agent
 
-## Overview
+AI coding agents need network access and credentials to do useful work,
+but giving them uncontrolled access to both is a risk — a prompt-injected
+or supply-chain-compromised agent can exfiltrate API keys, push to
+arbitrary remotes, or reach services it shouldn't.
 
-**terok-agent** builds container images, launches instrumented Podman
-containers, and manages the lifecycle of one AI coding agent at a time.
-It sits between [terok-sandbox](https://github.com/terok-ai/terok-sandbox)
-(container isolation) and [terok](https://github.com/terok-ai/terok)
-(project orchestration):
+terok-agent runs each agent in an isolated rootless Podman container with
+an egress firewall and a credential proxy that keeps real secrets off the
+container filesystem. One command to build, authenticate, and launch.
 
-```text
-terok  ->  terok-agent  ->  terok-sandbox  ->  terok-shield
-```
+## Prerequisites
 
-### Standalone vs. library
+- Python 3.12+
+- Podman (rootless) — `podman machine init` on macOS
 
-`terok-agent run claude .` is a self-contained command — it builds images,
-prepares config, and launches a container. The same functionality is
-available as a Python library for terok to compose into multi-agent
-workflows:
-
-```python
-from terok_agent import AgentRunner
-
-runner = AgentRunner()
-cname = runner.run_headless("claude", "/path/to/repo", prompt="Fix the bug")
-```
-
-## Quick start
+## Install
 
 ```bash
-pip install terok-agent        # requires Python 3.12+, Podman (rootless)
-terok-agent build              # build L0 (base) + L1 (agent CLI) images
-terok-agent auth claude        # authenticate (OAuth or API key)
-terok-agent run claude . -p "Fix the failing test"
+pip install terok-agent
 ```
 
-## Image layer architecture
+## Build container images
 
-```text
-L0 (base)    Ubuntu + dev tools + init script + dev user
-L1 (agent)   All AI agent CLIs, shell wrappers, ACP config
---- boundary: above owned by terok-agent, below by terok ---
-L2 (project) Optional user Dockerfile snippet (custom packages)
+```bash
+terok-agent build
 ```
 
-L1 is self-sufficient for standalone use. All user config (repo URL, SSH
-keys, branch, gate) is injected at runtime via environment variables and
-volume mounts — no L2 build needed.
+Builds two image layers: a base image (OS, dev tools, init scripts) and
+an agent image (all AI agent CLIs, shell wrappers, ACP config). Rebuild
+with `--rebuild` to bust caches or `--full-rebuild` for a clean pull.
 
-## Launch modes
+## Authenticate
 
-| Mode | Flag | Description |
-|------|------|-------------|
-| Headless | `-p "prompt"` | Fire-and-forget with a prompt; streams output |
-| Interactive | `--interactive` | User logs into the container; agent is ready |
-| Web | `--web` | Toad multi-agent TUI served over HTTP |
-| Tool | `run-tool <name>` | Run a sidecar tool (CodeRabbit, SonarCloud) |
+```bash
+terok-agent auth claude              # OAuth login
+terok-agent auth vibe                # interactive API key prompt
+terok-agent auth gh --api-key ghp_…  # non-interactive
+```
 
-## Agent registry
+Credentials are stored in a host-side database. Containers never see real
+keys — they receive phantom tokens resolved by the credential proxy.
+See [Security](security.md) for details.
 
-Agents are defined in YAML files under `resources/agents/`. Each file
-declares the provider binary, headless flags, credential proxy routing,
-auth modes, and git identity. Users can extend the registry by placing
-YAML files in `~/.config/terok/agent/agents/`.
+## First run
 
-See the [API Reference](reference/) for the full agent roster schema.
+```bash
+terok-agent run claude . -p "Add type hints to utils.py"
+```
 
-## Security model
+This clones the current directory into a hardened container, launches
+Claude in headless mode, and streams its output. The egress firewall
+and credential proxy are active by default.
 
-- **Egress firewall (gate)** — on by default. Containers cannot reach the
-  internet except through explicitly allowed domains. Disable with
-  `--no-gate` for development.
-- **[Credential proxy](credential-proxy.md)** — no real API keys or SSH
-  private keys enter containers. Phantom tokens are resolved host-side
-  by the credential proxy and SSH agent proxy in
-  [terok-sandbox](https://terok-ai.github.io/terok-sandbox/).
-  See the dedicated page for architecture details.
-- **Restricted mode** (`--restricted`) — disables auto-approve flags and
-  sets `--no-new-privileges` on the container.
-- **Rootless Podman** — all containers run without root privileges.
-- **Config isolation** — vendor config directories are bind-mounted
-  read-only where possible. Secrets are never written to shared mounts.
+See [Launch modes](launch-modes.md) for interactive, web, and tool modes.
 
-## Configuration
+## Next steps
 
-terok-agent uses a layered config stack (global -> project -> preset -> CLI)
-resolved via `config_stack`. The roster merges bundled agent definitions
-with user overrides using `_inherit` splicing for lists and deep merge
-for dicts.
-
-Key config paths:
-
-| Path | Purpose |
-|------|---------|
-| `~/.config/terok/agent/agents/` | User agent YAML overrides |
-| `~/.local/share/terok/agent/` | State root (credentials, tasks) |
-| `TEROK_AGENT_STATE_DIR` | Override state root via env var |
+- [Agents](agents.md) — supported agents, custom definitions, auth flows
+- [Security](security.md) — firewall, credential proxy, restricted mode
+- [Launch modes](launch-modes.md) — headless, interactive, web, tool
+- [Credential proxy internals](credential-proxy.md) — architecture deep dive

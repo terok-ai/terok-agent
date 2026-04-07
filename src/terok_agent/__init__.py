@@ -7,36 +7,12 @@ Builds agent images, launches instrumented containers, and manages the
 lifecycle of one AI coding agent at a time.  Designed for standalone use
 (``terok-agent run claude .``) and as a library for terok orchestration.
 
-Public API::
+The public surface is ``__all__`` below.  Key entry points:
 
-    # Provider registry
-    from terok_agent import HEADLESS_PROVIDERS, HeadlessProvider, get_provider
-    from terok_agent import PROVIDER_NAMES, CLIOverrides
-    from terok_agent import apply_provider_config, build_headless_command
-    from terok_agent import collect_opencode_provider_env, collect_all_auto_approve_env
-
-    # Agent config preparation
-    from terok_agent import AgentConfigSpec, prepare_agent_config_dir, parse_md_agent
-
-    # Auth
-    from terok_agent import AUTH_PROVIDERS, AuthProvider, authenticate
-
-    # Instructions
-    from terok_agent import resolve_instructions, bundled_default_instructions
-
-    # Credential proxy
-    from terok_agent import ensure_proxy_routes
-
-    # Config stack
-    from terok_agent import ConfigStack, ConfigScope, resolve_provider_value
-
-Internal symbols (available via submodule import for white-box tests)::
-
-    from terok_agent.provider.headless import generate_agent_wrapper, generate_all_wrappers
-    from terok_agent.provider.headless import OpenCodeProviderConfig, ProviderConfig, WrapperConfig
-    from terok_agent.roster.config_stack import deep_merge, load_yaml_scope, load_json_scope
-    from terok_agent.provider.instructions import has_custom_instructions
-    from terok_agent._util import podman_userns_args
+- :class:`AgentRunner` — launch agents in containers
+- :func:`authenticate` / :func:`store_api_key` — credential flows
+- :func:`build_base_images` — image construction
+- :func:`get_roster` — YAML agent registry
 """
 
 __version__: str = "0.0.0"  # placeholder; replaced at build time
