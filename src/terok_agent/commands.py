@@ -256,9 +256,9 @@ def _handle_build(
 
 def _handle_ls() -> None:
     """List running terok-agent containers."""
-    from terok_sandbox import get_project_container_states
+    from terok_sandbox import get_container_states
 
-    states = get_project_container_states("terok-agent-")
+    states = get_container_states("terok-agent-")
     if not states:
         print("No running containers.")
         return

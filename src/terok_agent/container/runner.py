@@ -490,7 +490,7 @@ class AgentRunner:
 
         # Sync (creates bare mirror if missing, fetches if exists)
         gate = GitGate(
-            project_id=repo_key,
+            scope=repo_key,
             gate_path=gate_path,
             upstream_url=repo_url,
         )
