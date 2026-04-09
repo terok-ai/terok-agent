@@ -415,13 +415,9 @@ def ensure_proxy_routes(cfg: SandboxConfig | None = None) -> Path:
 
 def _user_agents_dir() -> Path:
     """Return ``~/.config/terok/agent/agents/``."""
-    from terok_agent.paths import _SUBDIR, _UMBRELLA
+    from terok_sandbox.paths import umbrella_config_dir
 
-    try:
-        from platformdirs import user_config_dir
-    except ImportError:  # pragma: no cover
-        return Path.home() / ".config" / _UMBRELLA / _SUBDIR / _USER_AGENTS_DIR_NAME
-    return Path(user_config_dir(_UMBRELLA)) / _SUBDIR / _USER_AGENTS_DIR_NAME
+    return umbrella_config_dir("agent") / _USER_AGENTS_DIR_NAME
 
 
 def _load_yaml(text: str) -> dict:

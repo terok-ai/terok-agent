@@ -54,7 +54,6 @@ depends_on = [
     "terok_agent.credentials.auth",
     "terok_agent.roster.config_stack",
     "terok_agent.provider.headless",
-    "terok_agent.paths",
 ]
 
 # Roster package waypoint (re-exports from loader)
