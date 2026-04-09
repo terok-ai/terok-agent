@@ -314,7 +314,11 @@ def main() -> int:
         )
 
     # Determine base URL
-    base_url = args.base_url or os.environ.get(f"{config['env_var_prefix']}_BASE_URL") or config["base_url"]
+    base_url = (
+        args.base_url
+        or os.environ.get(f"{config['env_var_prefix']}_BASE_URL")
+        or config["base_url"]
+    )
     base_url = base_url.rstrip("/")
 
     # Fetch models from API
