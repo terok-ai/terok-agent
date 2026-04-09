@@ -177,7 +177,7 @@ def _handle_install(*, cfg: SandboxConfig | None = None) -> None:
         sys.exit(1)
     _ensure_routes(cfg=cfg)
     install_proxy_systemd(cfg=cfg)
-    print("Credential proxy systemd socket installed and started.")
+    print("Credential proxy installed via systemd socket activation.")
 
 
 def _handle_uninstall(*, cfg: SandboxConfig | None = None) -> None:
