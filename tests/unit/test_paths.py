@@ -64,10 +64,6 @@ class TestMountsDir:
 class TestUmbrellaConstants:
     """Verify umbrella namespace constants."""
 
-    def test_umbrella_is_terok(self) -> None:
-        """_UMBRELLA is 'terok'."""
-        assert paths._UMBRELLA == "terok"
-
     def test_subdir_is_agent(self) -> None:
         """_SUBDIR is 'agent'."""
         assert paths._SUBDIR == "agent"

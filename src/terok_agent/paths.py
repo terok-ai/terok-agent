@@ -12,7 +12,6 @@ from pathlib import Path
 
 from terok_sandbox.paths import umbrella_state_dir
 
-_UMBRELLA = "terok"
 _SUBDIR = "agent"
 
 
