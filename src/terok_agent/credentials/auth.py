@@ -118,8 +118,15 @@ def authenticate(
     *,
     mounts_dir: Path,
     image: str,
+    expose_token: bool = False,
 ) -> None:
     """Run the auth flow for *provider* against *project_id*.
+
+    Args:
+        expose_token: When True, copy the real credential files into
+            the shared mount instead of writing a phantom marker.  Used
+            by tier 3 (``expose_oauth_token``) where containers need
+            the actual token.
 
     Dispatches based on the provider's ``modes`` field:
 
@@ -152,7 +159,9 @@ def authenticate(
             store_api_key(provider, key)
             return
         # choice == "1" or anything else → OAuth
-        _run_auth_container(project_id, info, mounts_dir=mounts_dir, image=image)
+        _run_auth_container(
+            project_id, info, mounts_dir=mounts_dir, image=image, expose_token=expose_token
+        )
 
     elif info.supports_api_key:
         # API key only — fast path, no container
@@ -161,7 +170,9 @@ def authenticate(
 
     else:
         # OAuth only
-        _run_auth_container(project_id, info, mounts_dir=mounts_dir, image=image)
+        _run_auth_container(
+            project_id, info, mounts_dir=mounts_dir, image=image, expose_token=expose_token
+        )
 
 
 def store_api_key(
@@ -207,6 +218,7 @@ def _run_auth_container(
     mounts_dir: Path,
     image: str,
     credential_set: str = "default",
+    expose_token: bool = False,
 ) -> None:
     """Run an auth container, capture credentials to the DB.
 
@@ -274,6 +286,7 @@ def _run_auth_container(
             credential_set,
             mounts_base=mounts_dir,
             auth_provider=provider,
+            expose_token=expose_token,
         )
 
 
@@ -305,6 +318,8 @@ def _capture_credentials(
     credential_set: str,
     mounts_base: Path | None = None,
     auth_provider: AuthProvider | None = None,
+    *,
+    expose_token: bool = False,
 ) -> None:
     """Extract credentials from *auth_dir* and store in the credential DB.
 
@@ -357,22 +372,33 @@ def _capture_credentials(
         )
         return
 
-    # Write static .credentials.json for OAuth subscription mode detection
+    # Write .credentials.json — real token (tier 3) or phantom marker (default)
     if provider_name == "claude" and cred_data.get("type") == "oauth":
         if mounts_base is None:
             from terok_agent.paths import mounts_dir
 
             mounts_base = mounts_dir()
         try:
-            _write_claude_credentials_file(cred_data, mounts_base)
-            print("Subscription metadata written to shared Claude config mount.")
+            if expose_token:
+                _copy_real_credentials(auth_dir, mounts_base)
+                print("Real .credentials.json copied to shared Claude config mount.")
+            else:
+                _write_claude_credentials_file(cred_data, mounts_base)
+                print("Subscription metadata written to shared Claude config mount.")
         except Exception as exc:  # noqa: BLE001
             print(f"Warning: could not write .credentials.json: {exc}")
-        print(
-            "\nNote: Claude OAuth uses a shared credential for all tasks."
-            "\n      API calls are routed through the credential proxy — the real"
-            "\n      token never enters any container."
-        )
+        if expose_token:
+            print(
+                "\nNote: Claude OAuth token is EXPOSED in the shared mount."
+                "\n      Every task container can read the real token."
+                "\n      The credential proxy does NOT protect it."
+            )
+        else:
+            print(
+                "\nNote: Claude OAuth credential is shared across all task containers."
+                "\n      API calls are routed through the credential proxy — the real"
+                "\n      token stays on the host."
+            )
 
     # Apply declarative post-capture state from roster YAML
     if auth_provider and auth_provider.post_capture_state:
@@ -387,6 +413,20 @@ def _capture_credentials(
                 f"Warning: could not apply post_capture_state for {provider_name}: {exc}",
                 file=sys.stderr,
             )
+
+
+def _copy_real_credentials(auth_dir: Path, mounts_base: Path) -> None:
+    """Copy the real ``.credentials.json`` from the auth dir to the shared mount.
+
+    Used by tier 3 (``expose_oauth_token``) — the container needs the actual
+    OAuth token for direct API calls to ``api.anthropic.com``.
+    """
+    src = auth_dir / ".credentials.json"
+    if not src.is_file():
+        raise FileNotFoundError(f"No .credentials.json in {auth_dir}")
+    dest_dir = mounts_base / "_claude-config"
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(src, dest_dir / ".credentials.json")
 
 
 def _write_claude_credentials_file(cred_data: dict, mounts_base: Path) -> None:
