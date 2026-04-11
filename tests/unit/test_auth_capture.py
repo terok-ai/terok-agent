@@ -13,6 +13,7 @@ from terok_agent.credentials.auth import (
     PHANTOM_CREDENTIALS_MARKER,
     _apply_post_capture_state,
     _capture_credentials,
+    _copy_real_credentials,
     _write_claude_credentials_file,
     store_api_key,
 )
@@ -412,6 +413,107 @@ class TestCaptureWritesCredentialsFile:
             _capture_credentials("codex", tmp_path, "default", mounts_base=mounts)
 
         assert not (mounts / "_claude-config").exists()
+
+
+class TestCopyRealCredentials:
+    """Verify _copy_real_credentials preserves the real token file."""
+
+    def test_copies_real_file(self, tmp_path: Path) -> None:
+        """Real .credentials.json is copied verbatim to the shared mount."""
+        auth_dir = tmp_path / "auth"
+        auth_dir.mkdir()
+        real_creds = {"claudeAiOauth": {"accessToken": "real-token-abc"}}
+        (auth_dir / ".credentials.json").write_text(json.dumps(real_creds))
+
+        mounts = tmp_path / "mounts"
+        _copy_real_credentials(auth_dir, mounts)
+
+        dest = mounts / "_claude-config" / ".credentials.json"
+        assert dest.is_file()
+        assert json.loads(dest.read_text()) == real_creds
+
+    def test_raises_when_file_missing(self, tmp_path: Path) -> None:
+        """Raises FileNotFoundError when auth dir has no .credentials.json."""
+        import pytest
+
+        with pytest.raises(FileNotFoundError):
+            _copy_real_credentials(tmp_path, tmp_path / "mounts")
+
+
+class TestCaptureWithExposeToken:
+    """Verify _capture_credentials with expose_token=True copies the real file."""
+
+    def test_expose_token_copies_real_credentials(self, tmp_path: Path) -> None:
+        """expose_token=True copies the real .credentials.json instead of phantom."""
+        real_creds = {"claudeAiOauth": {"accessToken": "real-oauth-token", "scopes": "all"}}
+        (tmp_path / ".credentials.json").write_text(json.dumps(real_creds))
+
+        db_path = tmp_path / "proxy" / "credentials.db"
+        mounts = tmp_path / "mounts"
+        with patch("terok_sandbox.SandboxConfig") as mock_cfg_cls:
+            mock_cfg_cls.return_value.proxy_db_path = db_path
+            _capture_credentials(
+                "claude", tmp_path, "default", mounts_base=mounts, expose_token=True
+            )
+
+        dest = mounts / "_claude-config" / ".credentials.json"
+        assert dest.is_file()
+        data = json.loads(dest.read_text())
+        # Real token, NOT the phantom marker
+        assert data["claudeAiOauth"]["accessToken"] == "real-oauth-token"
+
+    def test_expose_token_false_writes_phantom(self, tmp_path: Path) -> None:
+        """expose_token=False (default) writes the phantom marker as before."""
+        real_creds = {"claudeAiOauth": {"accessToken": "real-token", "scopes": "all"}}
+        (tmp_path / ".credentials.json").write_text(json.dumps(real_creds))
+
+        db_path = tmp_path / "proxy" / "credentials.db"
+        mounts = tmp_path / "mounts"
+        with patch("terok_sandbox.SandboxConfig") as mock_cfg_cls:
+            mock_cfg_cls.return_value.proxy_db_path = db_path
+            _capture_credentials(
+                "claude", tmp_path, "default", mounts_base=mounts, expose_token=False
+            )
+
+        data = json.loads((mounts / "_claude-config" / ".credentials.json").read_text())
+        assert data["claudeAiOauth"]["accessToken"] == PHANTOM_CREDENTIALS_MARKER
+
+    def test_expose_token_prints_warning(self, tmp_path: Path, capsys) -> None:
+        """expose_token=True prints an EXPOSED warning."""
+        real_creds = {"claudeAiOauth": {"accessToken": "tok"}}
+        (tmp_path / ".credentials.json").write_text(json.dumps(real_creds))
+
+        db_path = tmp_path / "proxy" / "credentials.db"
+        mounts = tmp_path / "mounts"
+        with patch("terok_sandbox.SandboxConfig") as mock_cfg_cls:
+            mock_cfg_cls.return_value.proxy_db_path = db_path
+            _capture_credentials(
+                "claude", tmp_path, "default", mounts_base=mounts, expose_token=True
+            )
+
+        out = capsys.readouterr().out
+        assert "EXPOSED" in out
+
+    def test_expose_token_still_stores_in_db(self, tmp_path: Path) -> None:
+        """expose_token=True still stores the credential in the proxy DB."""
+        real_creds = {"claudeAiOauth": {"accessToken": "real-tok"}}
+        (tmp_path / ".credentials.json").write_text(json.dumps(real_creds))
+
+        db_path = tmp_path / "proxy" / "credentials.db"
+        mounts = tmp_path / "mounts"
+        with patch("terok_sandbox.SandboxConfig") as mock_cfg_cls:
+            mock_cfg_cls.return_value.proxy_db_path = db_path
+            _capture_credentials(
+                "claude", tmp_path, "default", mounts_base=mounts, expose_token=True
+            )
+
+        from terok_sandbox import CredentialDB
+
+        db = CredentialDB(db_path)
+        stored = db.load_credential("default", "claude")
+        db.close()
+        assert stored is not None
+        assert stored["access_token"] == "real-tok"
 
 
 class TestStoreApiKey:
