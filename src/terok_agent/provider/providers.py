@@ -175,22 +175,31 @@ PROVIDER_NAMES: tuple[str, ...] = ()
 # ── Public API ──────────────────────────────────────────────────────────────
 
 
-def get_provider(name: str | None, *, default_agent: str | None = None) -> AgentProvider:
-    """Resolve a provider name to an :class:`AgentProvider`.
+def resolve_provider(
+    providers: dict[str, AgentProvider],
+    name: str | None,
+    *,
+    default_agent: str | None = None,
+) -> AgentProvider:
+    """Look up a provider by name from *providers*, with fallback chain.
 
-    Resolution order:
-      1. Explicit *name* if given
-      2. *default_agent* (from project config)
-      3. ``"claude"`` (ultimate fallback)
-
-    Raises ``SystemExit`` if the resolved name is not in the registry.
+    Resolution order: explicit *name* → *default_agent* → ``"claude"``.
+    Raises ``SystemExit`` if the resolved name is not found.
     """
     resolved = name or default_agent or "claude"
-    provider = AGENT_PROVIDERS.get(resolved)
+    provider = providers.get(resolved)
     if provider is None:
-        valid = ", ".join(sorted(AGENT_PROVIDERS))
+        valid = ", ".join(sorted(providers))
         raise SystemExit(f"Unknown provider {resolved!r}. Valid providers: {valid}")
     return provider
+
+
+def get_provider(name: str | None, *, default_agent: str | None = None) -> AgentProvider:
+    """Resolve a provider name against the global :data:`AGENT_PROVIDERS` registry.
+
+    Convenience wrapper around :func:`resolve_provider`.
+    """
+    return resolve_provider(AGENT_PROVIDERS, name, default_agent=default_agent)
 
 
 def collect_all_auto_approve_env() -> dict[str, str]:

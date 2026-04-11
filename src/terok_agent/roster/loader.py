@@ -194,9 +194,9 @@ class AgentRoster:
         Falls back to *default_agent*, then ``"claude"``.
         Raises ``SystemExit`` if the resolved name is unknown.
         """
-        from terok_agent.provider.providers import get_provider
+        from terok_agent.provider.providers import resolve_provider
 
-        return get_provider(name, default_agent=default_agent)
+        return resolve_provider(self._providers, name, default_agent=default_agent)
 
     def get_auth_provider(self, name: str) -> AuthProvider:
         """Look up an auth provider by name.
