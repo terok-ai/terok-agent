@@ -111,9 +111,9 @@ if [[ -n "${REPO_ROOT:-}" && -n "${CODE_REPO:-}" ]]; then
       [[ -z "${_url}" ]] && continue
       [[ "${_actual}" == "${_url}" ]] && _match=true && break
     done
-    if [[ "${_match}" != "true" && -n "${_actual}" ]]; then
-      echo ">> cached .git origin mismatch (got: ${_actual}); wiping for fresh clone"
-      rm -rf "${REPO_ROOT}/.git"
+    if [[ "${_match}" != "true" ]]; then
+      echo ">> cached .git origin mismatch (got: ${_actual:-<none>}); wiping for fresh clone"
+      find "${REPO_ROOT}" -mindepth 1 -maxdepth 1 -exec rm -rf -- {} +
     fi
   fi
 

@@ -323,7 +323,9 @@ class AgentRunner:
                 env["CODE_REPO"] = effective_repo
                 workspace = task_dir / "workspace"
                 workspace.mkdir(parents=True, exist_ok=True)
-                _seed_from_cache(workspace, code_repo, self.sandbox.config)
+                _seed_from_cache(
+                    workspace, code_repo, self.sandbox.config, origin_url=effective_repo
+                )
                 volumes.append(f"{workspace}:/workspace:Z")
         else:
             # Agent modes: full env assembly via canonical builder
@@ -344,7 +346,7 @@ class AgentRunner:
                 effective_repo = self._setup_gate(code_repo, task_id) if gate else code_repo
                 ws_host = task_dir / "workspace"
                 ws_host.mkdir(parents=True, exist_ok=True)
-                _seed_from_cache(ws_host, code_repo, self.sandbox.config)
+                _seed_from_cache(ws_host, code_repo, self.sandbox.config, origin_url=effective_repo)
                 resolved_code_repo = effective_repo
             else:
                 ws_host = task_dir / "workspace"
@@ -671,11 +673,14 @@ def _generate_task_id() -> str:
     return uuid.uuid4().hex[:12]
 
 
-def _seed_from_cache(workspace: Path, repo_url: str, cfg: object) -> None:
+def _seed_from_cache(
+    workspace: Path, repo_url: str, cfg: object, *, origin_url: str | None = None
+) -> None:
     """Seed *workspace* from the clone cache for *repo_url* (best-effort).
 
-    Derives the cache scope from the repo URL using the same hashing
-    scheme as :meth:`AgentRunner._setup_gate`.
+    *repo_url* is always the upstream URL (used to derive the cache scope).
+    *origin_url* is written into the seeded ``.git`` as origin — typically
+    the gate HTTP URL when gated, or *repo_url* itself otherwise.
     """
     import hashlib
 
@@ -684,7 +689,7 @@ def _seed_from_cache(workspace: Path, repo_url: str, cfg: object) -> None:
     url_hash = hashlib.sha256(repo_url.encode()).hexdigest()[:12]
     basename = repo_url.rstrip("/").rsplit("/", 1)[-1].removesuffix(".git")
     scope = f"{basename}-{url_hash}"
-    seed_workspace_from_clone_cache(workspace, scope, origin_url=repo_url, cfg=cfg)
+    seed_workspace_from_clone_cache(workspace, scope, origin_url=origin_url or repo_url, cfg=cfg)
 
 
 def _resolve_repo(repo: str) -> tuple[str | None, Path | None]:

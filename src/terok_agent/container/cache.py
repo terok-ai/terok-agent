@@ -58,11 +58,12 @@ def seed_workspace_from_clone_cache(
         _copy_tree(cache_dir, workspace_path)
     except (OSError, shutil.Error, subprocess.CalledProcessError) as exc:
         _logger.warning("Clone cache seed failed (non-fatal): %s", exc)
-        _cleanup_partial_git(workspace_path)
+        _wipe_workspace_contents(workspace_path)
         return False
 
     if not (workspace_path / ".git").is_dir():
         _logger.warning("Cache copy did not produce .git; falling back to container clone")
+        _wipe_workspace_contents(workspace_path)
         return False
 
     if origin_url:
@@ -114,11 +115,13 @@ def _rewrite_origin(workspace_path: Path, url: str) -> None:
         _logger.warning("Failed to rewrite origin after cache seed: %s", exc)
 
 
-def _cleanup_partial_git(workspace_path: Path) -> None:
-    """Remove a partial .git directory left by a failed copy."""
-    git_dir = workspace_path / ".git"
-    if git_dir.exists():
+def _wipe_workspace_contents(workspace_path: Path) -> None:
+    """Remove all contents of *workspace_path* so the fallback clone finds it empty.
+
+    The init script requires an empty workspace for ``git clone``.
+    """
+    for child in workspace_path.iterdir():
         try:
-            shutil.rmtree(git_dir)
+            shutil.rmtree(child) if child.is_dir() else child.unlink()
         except OSError:
             pass

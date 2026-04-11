@@ -10,9 +10,9 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 from terok_agent.container.cache import (
-    _cleanup_partial_git,
     _copy_tree,
     _resolve_cache_dir,
+    _wipe_workspace_contents,
     seed_workspace_from_clone_cache,
 )
 
@@ -65,18 +65,20 @@ class TestCopyTree:
         assert (dst / "file.txt").read_text() == "hello"
 
 
-class TestCleanupPartialGit:
-    """Verify partial .git cleanup."""
+class TestWipeWorkspaceContents:
+    """Verify workspace cleanup removes all contents."""
 
-    def test_removes_git_dir(self, tmp_path: Path) -> None:
-        git_dir = tmp_path / ".git"
-        git_dir.mkdir()
-        (git_dir / "HEAD").write_text("ref: refs/heads/main")
-        _cleanup_partial_git(tmp_path)
-        assert not git_dir.exists()
+    def test_removes_all_contents(self, tmp_path: Path) -> None:
+        (tmp_path / ".git").mkdir()
+        (tmp_path / ".git" / "HEAD").write_text("ref: refs/heads/main")
+        (tmp_path / "README.md").write_text("hello")
+        (tmp_path / "src").mkdir()
+        (tmp_path / "src" / "main.py").write_text("pass")
+        _wipe_workspace_contents(tmp_path)
+        assert not any(tmp_path.iterdir())
 
-    def test_noop_when_no_git(self, tmp_path: Path) -> None:
-        _cleanup_partial_git(tmp_path)  # should not raise
+    def test_noop_when_empty(self, tmp_path: Path) -> None:
+        _wipe_workspace_contents(tmp_path)  # should not raise
 
 
 class TestSeedWorkspaceFromCloneCache:
@@ -138,11 +140,14 @@ class TestSeedWorkspaceFromCloneCache:
 
         cfg = SimpleNamespace(clone_cache_base_path=cache_base)
 
-        with patch(
-            "terok_agent.container.cache._copy_tree",
-            side_effect=OSError("disk full"),
-        ):
+        def partial_copy(src, dst):
+            """Simulate a partial copy that leaves files before failing."""
+            (dst / "README.md").write_text("partial")
+            raise OSError("disk full")
+
+        with patch("terok_agent.container.cache._copy_tree", side_effect=partial_copy):
             result = seed_workspace_from_clone_cache(ws, "proj", cfg=cfg)
 
         assert result is False
-        assert not (ws / ".git").exists()
+        # Entire workspace must be empty for fallback clone
+        assert not any(ws.iterdir())
