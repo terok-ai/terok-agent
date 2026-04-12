@@ -48,6 +48,7 @@ from .container.build import (
 )
 from .container.cache import seed_workspace_from_clone_cache
 from .container.env import ContainerEnvResult, ContainerEnvSpec, assemble_container_env
+from .container.inject import inject_agent_config, inject_prompt
 from .container.runner import AgentRunner
 
 # -- Credentials (auth flows, extractors, proxy commands) ----------------------
@@ -189,4 +190,7 @@ __all__ = [
     "assemble_container_env",
     # Clone cache
     "seed_workspace_from_clone_cache",
+    # Sealed injection helpers
+    "inject_agent_config",
+    "inject_prompt",
 ]

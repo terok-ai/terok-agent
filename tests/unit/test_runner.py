@@ -83,7 +83,7 @@ class TestAgentRunner:
         sandbox.run.assert_called_once()
         spec = sandbox.run.call_args[0][0]
         assert spec.image == "terok-l1-cli:test"
-        assert any("/home/dev/.terok" in v for v in spec.volumes)
+        assert any("/home/dev/.terok" in v.container_path for v in spec.volumes)
 
     def test_restricted_mode_sets_unrestricted_false(self, tmp_path: Path) -> None:
         """Restricted mode passes unrestricted=False in RunSpec."""
@@ -274,7 +274,7 @@ class TestAgentRunner:
 
         spec = sandbox.run.call_args[0][0]
         assert spec.env["TEROK_SHARED_DIR"] == "/data"
-        assert any(f"{shared}:/data:z" in v for v in spec.volumes)
+        assert any(v.host_path == shared and v.container_path == "/data" for v in spec.volumes)
 
 
 class TestGateIntegration:

@@ -9,6 +9,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 import pytest
+from terok_sandbox import VolumeSpec
 
 from terok_agent.container.env import (
     ContainerEnvResult,
@@ -18,6 +19,11 @@ from terok_agent.container.env import (
     assemble_container_env,
 )
 from terok_agent.roster import get_roster
+
+
+def _find_vol(volumes: tuple[VolumeSpec, ...], container_path: str) -> VolumeSpec | None:
+    """Find a VolumeSpec by container_path prefix."""
+    return next((v for v in volumes if container_path in v.container_path), None)
 
 
 @pytest.fixture
@@ -211,8 +217,10 @@ class TestWorkspaceVolume:
 
     def test_workspace_mounted_with_exclusive_label(self, base_spec, roster):
         result = assemble_container_env(base_spec, roster, proxy_bypass=True)
-        ws_mount = f"{base_spec.workspace_host_path}:/workspace:Z"
-        assert ws_mount in result.volumes
+        ws = _find_vol(result.volumes, "/workspace")
+        assert ws is not None
+        assert ws.host_path == base_spec.workspace_host_path
+        assert ws.sharing == "private"
 
 
 # ---------------------------------------------------------------------------
@@ -226,14 +234,15 @@ class TestSharedConfigMounts:
     def test_claude_config_mounted(self, workspace, envs_dir, roster):
         spec = _spec(workspace, envs_dir)
         result = assemble_container_env(spec, roster, proxy_bypass=True)
-        mount_str = " ".join(result.volumes)
-        assert "_claude-config" in mount_str
-        assert "/home/dev/.claude:z" in mount_str
+        claude = _find_vol(result.volumes, "/home/dev/.claude")
+        assert claude is not None
+        assert "_claude-config" in str(claude.host_path)
+        assert claude.sharing == "shared"
 
     def test_shared_mounts_use_lowercase_z(self, workspace, envs_dir, roster):
         spec = _spec(workspace, envs_dir)
         result = assemble_container_env(spec, roster, proxy_bypass=True)
-        shared = [v for v in result.volumes if ":z" in v and ":Z" not in v]
+        shared = [v for v in result.volumes if v.sharing == "shared"]
         assert len(shared) > 0
 
     def test_host_dirs_created(self, workspace, envs_dir, roster):
@@ -255,11 +264,14 @@ class TestAgentConfigMount:
         cfg_dir.mkdir()
         spec = _spec(workspace, envs_dir, agent_config_dir=cfg_dir)
         result = assemble_container_env(spec, roster, proxy_bypass=True)
-        assert f"{cfg_dir}:/home/dev/.terok:Z" in result.volumes
+        vol = _find_vol(result.volumes, "/home/dev/.terok")
+        assert vol is not None
+        assert vol.host_path == cfg_dir
+        assert vol.sharing == "private"
 
     def test_no_agent_config_when_none(self, base_spec, roster):
         result = assemble_container_env(base_spec, roster, proxy_bypass=True)
-        assert not any("/home/dev/.terok" in v for v in result.volumes)
+        assert _find_vol(result.volumes, "/home/dev/.terok") is None
 
 
 # ---------------------------------------------------------------------------
@@ -293,14 +305,16 @@ class TestSharedTaskDir:
         shared = tmp_path / "shared"
         spec = _spec(workspace, envs_dir, shared_dir=shared)
         result = assemble_container_env(spec, roster, proxy_bypass=True)
-        assert f"{shared}:/shared:z" in result.volumes
+        vol = _find_vol(result.volumes, "/shared")
+        assert vol is not None and vol.host_path == shared and vol.sharing == "shared"
         assert result.env["TEROK_SHARED_DIR"] == "/shared"
 
     def test_shared_dir_custom_mount(self, workspace, envs_dir, roster, tmp_path):
         shared = tmp_path / "data"
         spec = _spec(workspace, envs_dir, shared_dir=shared, shared_mount="/data/ipc")
         result = assemble_container_env(spec, roster, proxy_bypass=True)
-        assert f"{shared}:/data/ipc:z" in result.volumes
+        vol = _find_vol(result.volumes, "/data/ipc")
+        assert vol is not None and vol.host_path == shared
         assert result.env["TEROK_SHARED_DIR"] == "/data/ipc"
 
     def test_shared_dir_created(self, workspace, envs_dir, roster, tmp_path):
@@ -312,7 +326,7 @@ class TestSharedTaskDir:
     def test_no_shared_dir_by_default(self, base_spec, roster):
         result = assemble_container_env(base_spec, roster, proxy_bypass=True)
         assert "TEROK_SHARED_DIR" not in result.env
-        assert not any("/shared" in v for v in result.volumes)
+        assert _find_vol(result.volumes, "/shared") is None
 
 
 # ---------------------------------------------------------------------------
@@ -324,9 +338,11 @@ class TestExtraVolumes:
     """Verify caller-provided extra volumes are appended."""
 
     def test_extra_volumes_appended(self, workspace, envs_dir, roster):
-        spec = _spec(workspace, envs_dir, extra_volumes=("/host/ssh:/home/dev/.ssh:z",))
+        extra = VolumeSpec(Path("/host/ssh"), "/home/dev/.ssh")
+        spec = _spec(workspace, envs_dir, extra_volumes=(extra,))
         result = assemble_container_env(spec, roster, proxy_bypass=True)
-        assert "/host/ssh:/home/dev/.ssh:z" in result.volumes
+        vol = _find_vol(result.volumes, "/home/dev/.ssh")
+        assert vol is not None and vol.host_path == Path("/host/ssh")
 
 
 # ---------------------------------------------------------------------------
@@ -491,10 +507,10 @@ class TestSharedConfigMountsUnit:
 
     def test_deduplicates_by_host_dir(self, roster, tmp_path):
         mounts = _shared_config_mounts(roster, tmp_path)
-        host_dirs = [m.split(":")[0] for m in mounts]
+        host_dirs = [str(m.host_path) for m in mounts]
         assert len(host_dirs) == len(set(host_dirs))
 
     def test_all_use_shared_label(self, roster, tmp_path):
         mounts = _shared_config_mounts(roster, tmp_path)
         for m in mounts:
-            assert m.endswith(":z"), f"Expected :z label, got: {m}"
+            assert m.sharing == "shared", f"Expected sharing='shared', got: {m.sharing}"

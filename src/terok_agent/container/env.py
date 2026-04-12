@@ -28,6 +28,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from terok_sandbox import Sharing, VolumeSpec
+
 if TYPE_CHECKING:
     from terok_agent.roster.loader import AgentRoster
 
@@ -123,9 +125,8 @@ class ContainerEnvSpec:
 
     # -- Caller-specific mounts --------------------------------------------
 
-    extra_volumes: tuple[str, ...] = ()
-    """Additional volume mount strings (e.g. SSH mounts from terok's security
-    mode logic)."""
+    extra_volumes: tuple[VolumeSpec, ...] = ()
+    """Additional volume specs from the caller (e.g. SSH mounts from terok)."""
 
 
 @dataclass(frozen=True)
@@ -139,8 +140,8 @@ class ContainerEnvResult:
     env: dict[str, str]
     """Environment variables for the container."""
 
-    volumes: tuple[str, ...]
-    """Volume mount strings (``host:container[:opts]``)."""
+    volumes: tuple[VolumeSpec, ...]
+    """Typed volume specs — the sandbox decides whether to mount or inject."""
 
     task_dir: Path
     """Host-side task directory.  When ``spec.task_dir`` was ``None``, this is
@@ -173,7 +174,7 @@ def assemble_container_env(
     from terok_agent.paths import mounts_dir as _mounts_dir
 
     env: dict[str, str] = {}
-    volumes: list[str] = []
+    volumes: list[VolumeSpec] = []
 
     # 1. Base env
     env["TASK_ID"] = spec.task_id
@@ -203,7 +204,7 @@ def assemble_container_env(
         env["CLONE_FROM"] = spec.clone_from
 
     # 7. Workspace volume
-    volumes.append(f"{spec.workspace_host_path}:/workspace:Z")
+    volumes.append(VolumeSpec(spec.workspace_host_path, "/workspace", sharing=Sharing.PRIVATE))
 
     # 8. Shared config mounts from roster
     mounts_base = spec.envs_dir or _mounts_dir()
@@ -215,7 +216,9 @@ def assemble_container_env(
 
     # 10. Agent config mount
     if spec.agent_config_dir:
-        volumes.append(f"{spec.agent_config_dir}:/home/dev/.terok:Z")
+        volumes.append(
+            VolumeSpec(spec.agent_config_dir, "/home/dev/.terok", sharing=Sharing.PRIVATE)
+        )
 
     # 11. Unrestricted mode
     if spec.unrestricted:
@@ -225,7 +228,7 @@ def assemble_container_env(
     # 12. Shared task directory
     if spec.shared_dir:
         spec.shared_dir.mkdir(parents=True, exist_ok=True)
-        volumes.append(f"{spec.shared_dir}:{spec.shared_mount}:z")
+        volumes.append(VolumeSpec(spec.shared_dir, spec.shared_mount))
         env["TEROK_SHARED_DIR"] = spec.shared_mount
 
     # 13. Extra volumes
@@ -264,19 +267,19 @@ def _resolve_git_identity(spec: ContainerEnvSpec, roster: AgentRoster) -> dict[s
     }
 
 
-def _shared_config_mounts(roster: AgentRoster, mounts_base: Path) -> list[str]:
-    """Derive shared volume mounts from the agent roster.
+def _shared_config_mounts(roster: AgentRoster, mounts_base: Path) -> list[VolumeSpec]:
+    """Derive shared volume specs from the agent roster.
 
     Uses ``roster.mounts`` — the already-deduplicated list that merges auth
     provider mounts and explicit ``mounts:`` YAML sections.  Creates host
     directories on demand.
     """
-    mounts: list[str] = []
+    specs: list[VolumeSpec] = []
     for m in roster.mounts:
         host_dir = mounts_base / m.host_dir
         host_dir.mkdir(parents=True, exist_ok=True)
-        mounts.append(f"{host_dir}:{m.container_path}:z")
-    return mounts
+        specs.append(VolumeSpec(host_dir, m.container_path))
+    return specs
 
 
 def _inject_proxy_tokens(roster: AgentRoster, scope: str, task_id: str) -> dict[str, str]:

@@ -24,6 +24,8 @@ import uuid
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from terok_sandbox import Sharing, VolumeSpec
+
 from .build import BuildError, build_base_images
 
 if TYPE_CHECKING:
@@ -315,9 +317,9 @@ class AgentRunner:
                 env["GIT_BRANCH"] = branch
             env.update(self._direct_credential_env(provider))
 
-            volumes: list[str] = []
+            volumes: list[VolumeSpec] = []
             if local_path:
-                volumes.append(f"{local_path}:/workspace:Z")
+                volumes.append(VolumeSpec(local_path, "/workspace", sharing=Sharing.PRIVATE))
             elif code_repo:
                 effective_repo = self._setup_gate(code_repo, task_id) if gate else code_repo
                 env["CODE_REPO"] = effective_repo
@@ -326,7 +328,7 @@ class AgentRunner:
                 _seed_from_cache(
                     workspace, code_repo, self.sandbox.config, origin_url=effective_repo
                 )
-                volumes.append(f"{workspace}:/workspace:Z")
+                volumes.append(VolumeSpec(workspace, "/workspace", sharing=Sharing.PRIVATE))
         else:
             # Agent modes: full env assembly via canonical builder
             agent_config_dir = self._prepare_agent_config(
@@ -584,7 +586,7 @@ class AgentRunner:
         image: str,
         task_id: str,
         env: dict[str, str],
-        volumes: list[str],
+        volumes: list[VolumeSpec],
         command: list[str],
         task_dir: Path,
         name: str | None = None,
