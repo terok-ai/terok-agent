@@ -501,7 +501,7 @@ class TestSharedConfigPatches:
     """Verify proxy config patches are applied during env assembly."""
 
     def test_apply_patches_writes_toml(self, roster, tmp_path):
-        """Config patches in the roster should produce patched TOML files."""
+        """Config patches in the roster must produce patched TOML files."""
         from terok_executor.credentials.proxy_config import apply_shared_config_patches
 
         # Create the host mount dir that _shared_config_mounts would create.
@@ -515,27 +515,30 @@ class TestSharedConfigPatches:
             apply_shared_config_patches(roster, tmp_path)
 
         config_path = vibe_dir / "config.toml"
-        if config_path.exists():
-            import tomllib
+        assert config_path.exists(), "apply_shared_config_patches must create config.toml"
 
-            data = tomllib.loads(config_path.read_text())
-            providers = data.get("providers", [])
-            mistral = next((p for p in providers if p.get("name") == "mistral"), None)
-            assert mistral is not None
-            assert "host.containers.internal:18731" in mistral["api_base"]
+        import tomllib
 
-    def test_assemble_env_calls_patches(self, workspace, envs_dir, roster):
-        """assemble_container_env must invoke apply_shared_config_patches."""
-        spec = _spec(workspace, envs_dir)
-        with patch(
-            "terok_executor.credentials.proxy_config.apply_shared_config_patches"
-        ) as m_patches:
-            assemble_container_env(spec, roster, proxy_bypass=True)
+        data = tomllib.loads(config_path.read_text())
+        providers = data.get("providers", [])
+        mistral = next((p for p in providers if p.get("name") == "mistral"), None)
+        assert mistral is not None, "config.toml must contain a mistral provider entry"
+        assert "host.containers.internal:18731" in mistral["api_base"]
 
-        m_patches.assert_called_once_with(roster, envs_dir)
+    def test_assemble_env_calls_patches_with_and_without_bypass(self, workspace, envs_dir, roster):
+        """assemble_container_env must invoke patches regardless of proxy_bypass."""
+        for bypass in (True, False):
+            with patch(
+                "terok_executor.credentials.proxy_config.apply_shared_config_patches"
+            ) as m_patches:
+                assemble_container_env(
+                    spec=_spec(workspace, envs_dir), roster=roster, proxy_bypass=bypass
+                )
+
+            m_patches.assert_called_once_with(roster, envs_dir)
 
     def test_patches_idempotent(self, roster, tmp_path):
-        """Calling apply_shared_config_patches twice doesn't corrupt the file."""
+        """Calling apply_shared_config_patches twice must not duplicate entries."""
         from terok_executor.credentials.proxy_config import apply_shared_config_patches
 
         vibe_dir = tmp_path / "_vibe-config"
@@ -549,14 +552,14 @@ class TestSharedConfigPatches:
             apply_shared_config_patches(roster, tmp_path)
 
         config_path = vibe_dir / "config.toml"
-        if config_path.exists():
-            import tomllib
+        assert config_path.exists(), "config.toml must exist after double apply"
 
-            data = tomllib.loads(config_path.read_text())
-            providers = data.get("providers", [])
-            # Should have exactly one mistral entry, not duplicated.
-            mistral_entries = [p for p in providers if p.get("name") == "mistral"]
-            assert len(mistral_entries) == 1
+        import tomllib
+
+        data = tomllib.loads(config_path.read_text())
+        providers = data.get("providers", [])
+        mistral_entries = [p for p in providers if p.get("name") == "mistral"]
+        assert len(mistral_entries) == 1, "idempotent: must have exactly one mistral entry"
 
 
 class TestSharedConfigMountsUnit:

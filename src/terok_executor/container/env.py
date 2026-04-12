@@ -212,6 +212,13 @@ def assemble_container_env(
 
     # 8b. Re-apply proxy config patches (idempotent — ensures shared mount
     #     dirs contain correct proxy URLs even after state wipe).
+    #
+    #     NOT gated by proxy_bypass: that flag only skips phantom-token
+    #     injection here because the caller (terok) injects richer tokens
+    #     itself — the credential proxy is still in use and agents still
+    #     need their config files rewritten to route through it.  Providers
+    #     whose credential is exposed directly (Claude OAuth tier 3) are
+    #     safe because they have no shared_config_patch in the roster.
     from terok_executor.credentials.proxy_config import apply_shared_config_patches
 
     apply_shared_config_patches(roster, mounts_base)
