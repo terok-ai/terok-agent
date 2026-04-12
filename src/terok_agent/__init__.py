@@ -86,6 +86,15 @@ from .provider.providers import (
 # -- Roster (agent catalog + config resolution) --------------------------------
 from .roster import CredentialProxyRoute, SidecarSpec, ensure_proxy_routes, get_roster
 
+# -- Storage queries (filesystem footprint measurement) -------------------------
+from .storage import (
+    SharedMountStorageInfo,
+    TaskStorageInfo,
+    get_shared_mounts_storage,
+    get_task_storage,
+    get_tasks_storage,
+)
+
 # -- Bootstrap YAML roster into module-level dicts ---------------------------
 # AGENT_PROVIDERS and AUTH_PROVIDERS are empty dicts populated here to avoid
 # circular imports (roster → auth/providers → roster).
@@ -166,6 +175,12 @@ __all__ = [
     "CheckVerdict",
     "DoctorCheck",
     "agent_doctor_checks",
+    # Storage queries
+    "SharedMountStorageInfo",
+    "TaskStorageInfo",
+    "get_shared_mounts_storage",
+    "get_task_storage",
+    "get_tasks_storage",
     # Runner facade
     "AgentRunner",
     # Container environment assembly
