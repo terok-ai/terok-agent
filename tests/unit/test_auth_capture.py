@@ -494,8 +494,8 @@ class TestCaptureWithExposeToken:
         out = capsys.readouterr().out
         assert "EXPOSED" in out
 
-    def test_expose_token_still_stores_in_db(self, tmp_path: Path) -> None:
-        """expose_token=True still stores the credential in the proxy DB."""
+    def test_expose_token_skips_proxy_db(self, tmp_path: Path) -> None:
+        """expose_token=True does NOT store in proxy DB — avoids refresh conflict."""
         real_creds = {"claudeAiOauth": {"accessToken": "real-tok"}}
         (tmp_path / ".credentials.json").write_text(json.dumps(real_creds))
 
@@ -512,8 +512,7 @@ class TestCaptureWithExposeToken:
         db = CredentialDB(db_path)
         stored = db.load_credential("default", "claude")
         db.close()
-        assert stored is not None
-        assert stored["access_token"] == "real-tok"
+        assert stored is None
 
 
 class TestStoreApiKey:

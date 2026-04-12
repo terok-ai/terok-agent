@@ -326,6 +326,10 @@ def _capture_credentials(
     Uses the per-provider extractors from :mod:`credential_extractors`.
     If extraction fails (no credential file, malformed), prints a warning
     but does not raise — the auth flow succeeded, the user can retry.
+
+    When *expose_token* is ``True`` for Claude OAuth (tier 3), the credential
+    is **not** stored in the proxy DB — Claude manages its own token lifecycle
+    directly, and proxy-side refresh would invalidate the exposed token.
     """
     from .extractors import extract_credential
 
@@ -350,30 +354,36 @@ def _capture_credentials(
                 print(f"  {f}")
         return
 
-    try:
-        from terok_sandbox import CredentialDB, SandboxConfig
+    is_claude_oauth = provider_name == "claude" and cred_data.get("type") == "oauth"
+    exposed_directly = expose_token and is_claude_oauth
 
-        cfg = SandboxConfig()
-        db = CredentialDB(cfg.proxy_db_path)
+    if exposed_directly:
+        print(f"\nCredentials for {provider_name} bypassing proxy DB (exposed directly)")
+    else:
         try:
-            db.store_credential(credential_set, provider_name, cred_data)
-            print(f"\nCredentials captured for {provider_name} (set: {credential_set})")
-        finally:
-            db.close()
-    except Exception as exc:
-        print(
-            f"\nWarning [auth]: failed to store credentials for {provider_name} "
-            f"in proxy DB: {type(exc).__name__}: {exc}",
-            file=sys.stderr,
-        )
-        print(
-            "The auth flow completed but credentials were not saved to the proxy DB.",
-            file=sys.stderr,
-        )
-        return
+            from terok_sandbox import CredentialDB, SandboxConfig
+
+            cfg = SandboxConfig()
+            db = CredentialDB(cfg.proxy_db_path)
+            try:
+                db.store_credential(credential_set, provider_name, cred_data)
+                print(f"\nCredentials captured for {provider_name} (set: {credential_set})")
+            finally:
+                db.close()
+        except Exception as exc:
+            print(
+                f"\nWarning [auth]: failed to store credentials for {provider_name} "
+                f"in proxy DB: {type(exc).__name__}: {exc}",
+                file=sys.stderr,
+            )
+            print(
+                "The auth flow completed but credentials were not saved to the proxy DB.",
+                file=sys.stderr,
+            )
+            return
 
     # Write .credentials.json — real token (tier 3) or phantom marker (default)
-    if provider_name == "claude" and cred_data.get("type") == "oauth":
+    if is_claude_oauth:
         if mounts_base is None:
             from terok_agent.paths import mounts_dir
 
