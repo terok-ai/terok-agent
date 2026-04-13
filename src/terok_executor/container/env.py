@@ -155,7 +155,7 @@ def assemble_container_env(
     spec: ContainerEnvSpec,
     roster: AgentRoster,
     *,
-    proxy_bypass: bool = False,
+    caller_manages_proxy: bool = False,
 ) -> ContainerEnvResult:
     """Assemble container environment variables and volume mounts.
 
@@ -166,7 +166,12 @@ def assemble_container_env(
     Args:
         spec: What the caller wants — all host↔container contract fields.
         roster: Agent roster for shared mounts, proxy routes, provider identity.
-        proxy_bypass: Skip credential proxy entirely (terok's explicit opt-out).
+        caller_manages_proxy: When ``True``, skip phantom-token injection
+            here — the caller injects richer proxy tokens itself (e.g.
+            terok's per-provider OAuth tiers, socket transport, SSH agent).
+            Shared config patches (``api_base`` rewrites) still run because
+            the credential proxy **is** in use; only token injection is
+            delegated.
 
     Returns:
         Assembled env dict, volume tuple, and resolved task_dir.
@@ -210,8 +215,21 @@ def assemble_container_env(
     mounts_base = spec.envs_dir or _mounts_dir()
     volumes += _shared_config_mounts(roster, mounts_base)
 
+    # 8b. Re-apply proxy config patches (idempotent — ensures shared mount
+    #     dirs contain correct proxy URLs even after state wipe).
+    #
+    #     NOT gated by caller_manages_proxy: that flag only skips
+    #     phantom-token injection here because the caller (terok) injects
+    #     richer tokens itself — the credential proxy is still in use and
+    #     agents still need their config files rewritten to route through
+    #     it.  Providers whose credential is exposed directly (Claude OAuth
+    #     tier 3) are safe because they have no shared_config_patch.
+    from terok_executor.credentials.proxy_config import apply_shared_config_patches
+
+    apply_shared_config_patches(roster, mounts_base)
+
     # 9. Credential proxy
-    if not proxy_bypass:
+    if not caller_manages_proxy:
         env.update(_inject_proxy_tokens(roster, spec.credential_scope, spec.task_id))
 
     # 10. Agent config mount

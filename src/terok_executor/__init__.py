@@ -61,6 +61,7 @@ from .credentials.auth import (
 )
 from .credentials.extractors import extract_credential
 from .credentials.proxy_commands import PROXY_COMMANDS, scan_leaked_credentials
+from .credentials.proxy_config import ConfigPatchError
 
 # -- Doctor + paths ------------------------------------------------------------
 from .doctor import agent_doctor_checks
@@ -172,6 +173,7 @@ __all__ = [
     "CommandDef",
     "mounts_dir",
     "scan_leaked_credentials",
+    "ConfigPatchError",
     # Doctor (container health checks)
     "CheckVerdict",
     "DoctorCheck",

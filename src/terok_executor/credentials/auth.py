@@ -43,7 +43,7 @@ class AuthProvider:
     """Human-readable display name (e.g. ``"Codex"``)."""
 
     host_dir_name: str
-    """Directory name under ``mounts_dir()`` (e.g. ``"_codex-config"``)."""
+    """Single-segment directory name under ``mounts_dir()`` (e.g. ``"_codex-config"``)."""
 
     container_mount: str
     """Mount point inside the container (e.g. ``"/home/dev/.codex"``)."""
@@ -70,6 +70,14 @@ class AuthProvider:
     mount directory.  Example: ``{".claude.json": {"hasCompletedOnboarding": true}}``
     marks Claude Code onboarding as complete so the first-run wizard is skipped.
     """
+
+    def __post_init__(self) -> None:
+        """Validate fields that become filesystem paths."""
+        p = Path(self.host_dir_name)
+        if p.is_absolute() or ".." in p.parts or len(p.parts) != 1:
+            raise ValueError(
+                f"host_dir_name must be a single directory segment, got {self.host_dir_name!r}"
+            )
 
     @property
     def supports_oauth(self) -> bool:

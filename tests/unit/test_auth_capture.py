@@ -328,11 +328,12 @@ class TestCaptureAppliesPostCaptureState:
         provider = AuthProvider(
             name="claude",
             label="Claude",
-            host_dir_name="../../escape",  # will trigger path traversal guard
+            host_dir_name="_claude-config",
             container_mount="/home/dev/.claude",
             command=["claude"],
             banner_hint="",
             modes=("api_key",),
+            # Target file is a directory — write will fail
             post_capture_state={".claude.json": {"hasCompletedOnboarding": True}},
         )
 
@@ -340,6 +341,10 @@ class TestCaptureAppliesPostCaptureState:
         (tmp_path / ".credentials.json").write_text(json.dumps(cred))
 
         mounts = tmp_path / "mounts"
+        # Pre-create the target as a directory so the JSON write fails
+        blocker = mounts / "_claude-config" / ".claude.json"
+        blocker.mkdir(parents=True)
+
         db_path = tmp_path / "proxy" / "credentials.db"
         with patch("terok_sandbox.SandboxConfig") as mock_cfg_cls:
             mock_cfg_cls.return_value.proxy_db_path = db_path
