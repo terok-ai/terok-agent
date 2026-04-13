@@ -65,23 +65,6 @@ def write_proxy_config(provider_name: str) -> None:
     print(f"Proxy config written to {config_path}")
 
 
-def _safe_config_path(shared_dir: Path, filename: str) -> Path:
-    """Resolve *filename* inside *shared_dir*, rejecting traversal attempts.
-
-    Raises :class:`ConfigPatchError` if the resolved path escapes the
-    intended directory (absolute paths, ``..`` components, symlinks).
-    """
-    rel = Path(filename)
-    if rel.is_absolute() or ".." in rel.parts:
-        raise ConfigPatchError(f"invalid patch file path: {filename!r}")
-
-    target = (shared_dir / rel).resolve(strict=False)
-    base = shared_dir.resolve(strict=True)
-    if base not in target.parents and target != base:
-        raise ConfigPatchError(f"patch target {target} escapes shared dir {base}")
-    return target
-
-
 def apply_shared_config_patches(roster: AgentRoster, mounts_base: Path) -> None:
     """Re-apply every ``shared_config_patch`` for the whole roster.
 
@@ -106,13 +89,11 @@ def apply_shared_config_patches(roster: AgentRoster, mounts_base: Path) -> None:
             continue
 
         patch = route.shared_config_patch
-        shared_dir = mounts_base / auth_info.host_dir_name
-        # Directory was already created by _shared_config_mounts(); ensure anyway.
-        shared_dir.mkdir(parents=True, exist_ok=True)
-
-        config_path = _safe_config_path(shared_dir, patch["file"])
-
         try:
+            shared_dir = mounts_base / auth_info.host_dir_name
+            shared_dir.mkdir(parents=True, exist_ok=True)
+            config_path = _safe_config_path(shared_dir, patch["file"])
+
             if "yaml_set" in patch:
                 _apply_yaml_patch(config_path, patch, proxy_url)
             elif "toml_table" in patch:
@@ -122,8 +103,28 @@ def apply_shared_config_patches(roster: AgentRoster, mounts_base: Path) -> None:
             raise
         except Exception as exc:
             raise ConfigPatchError(
-                f"Failed to apply proxy config patch for {name} at {config_path}"
+                f"Failed to apply proxy config patch for {name} (file={patch.get('file')!r})"
             ) from exc
+
+
+# ── Private helpers ──────────────────────────────────────────────────────
+
+
+def _safe_config_path(shared_dir: Path, filename: str) -> Path:
+    """Resolve *filename* inside *shared_dir*, rejecting traversal attempts.
+
+    Raises :class:`ConfigPatchError` if the resolved path escapes the
+    intended directory (absolute paths, ``..`` components, symlinks).
+    """
+    rel = Path(filename)
+    if rel.is_absolute() or ".." in rel.parts:
+        raise ConfigPatchError(f"invalid patch file path: {filename!r}")
+
+    target = (shared_dir / rel).resolve(strict=False)
+    base = shared_dir.resolve(strict=True)
+    if base not in target.parents and target != base:
+        raise ConfigPatchError(f"patch target {target} escapes shared dir {base}")
+    return target
 
 
 def _apply_toml_patch(config_path: Path, patch: dict, proxy_url: str) -> None:
