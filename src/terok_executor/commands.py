@@ -87,6 +87,8 @@ def _handle_run(
     name: str | None = None,
     restricted: bool = False,
     gpu: bool = False,
+    memory: str | None = None,
+    cpus: str | None = None,
     git_identity_from_host: bool = False,
     shared_dir: str | None = None,
     shared_mount: str = "/shared",
@@ -113,6 +115,8 @@ def _handle_run(
         "branch": branch,
         "unrestricted": not restricted,
         "gpu": gpu,
+        "memory": memory,
+        "cpus": cpus,
         "human_name": human_name,
         "human_email": human_email,
         "authorship": authorship,
@@ -258,7 +262,7 @@ def _handle_ls() -> None:
     """List running terok-executor containers."""
     from terok_sandbox import get_container_states
 
-    states = get_container_states("terok-executor-")
+    states = get_container_states("terok-executor")
     if not states:
         print("No running containers.")
         return
@@ -304,6 +308,8 @@ RUN_COMMAND = CommandDef(
             help="Restrict agent permissions (no auto-approve, no-new-privileges)",
         ),
         ArgDef(name="--gpu", action="store_true", help="Enable GPU passthrough"),
+        ArgDef(name="--memory", help="Container memory limit (e.g. 4g, 512m)"),
+        ArgDef(name="--cpus", help="Container CPU limit (e.g. 2.0, 0.5)"),
         ArgDef(
             name="--git-identity-from-host",
             action="store_true",
