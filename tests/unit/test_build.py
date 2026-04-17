@@ -306,44 +306,44 @@ class TestTemplateRendering:
         assert "FROM" in content
 
     def test_l1_is_valid_dockerfile(self) -> None:
-        content = render_l1("terok-l0:test")
+        content = render_l1("terok-l0:test", family="deb")
         assert content.startswith("# syntax=docker")
         assert "FROM" in content
 
     def test_l1_contains_agent_installs(self) -> None:
-        content = render_l1("terok-l0:test")
+        content = render_l1("terok-l0:test", family="deb")
         assert "@openai/codex" in content
         assert "claude" in content.lower()
 
     def test_l1_contains_cache_bust_arg(self) -> None:
-        content = render_l1("terok-l0:test")
+        content = render_l1("terok-l0:test", family="deb")
         assert "ARG AGENT_CACHE_BUST=" in content
 
     def test_l1_renders_with_different_base(self) -> None:
-        content = render_l1("terok-l0:nvidia-cuda-12.4")
+        content = render_l1("terok-l0:nvidia-cuda-12.4", family="deb")
         assert "FROM" in content
 
     def test_l1_sidecar_is_valid_dockerfile(self) -> None:
-        content = render_l1_sidecar("terok-l0:test")
+        content = render_l1_sidecar("terok-l0:test", family="deb")
         assert content.startswith("# syntax=docker")
         assert "FROM" in content
 
     def test_l1_sidecar_contains_coderabbit(self) -> None:
-        content = render_l1_sidecar("terok-l0:test", tool_name="coderabbit")
+        content = render_l1_sidecar("terok-l0:test", family="deb", tool_name="coderabbit")
         assert "coderabbit" in content.lower()
 
     def test_l1_sidecar_no_agent_installs(self) -> None:
-        content = render_l1_sidecar("terok-l0:test")
+        content = render_l1_sidecar("terok-l0:test", family="deb")
         assert "@openai/codex" not in content
         assert "claude.ai/install" not in content
 
     def test_l1_sidecar_contains_cache_bust_arg(self) -> None:
-        content = render_l1_sidecar("terok-l0:test")
+        content = render_l1_sidecar("terok-l0:test", family="deb")
         assert "ARG TOOL_CACHE_BUST=" in content
 
     def test_l1_sidecar_unknown_tool_empty(self) -> None:
         """Unknown tool_name renders a valid but tool-less Dockerfile."""
-        content = render_l1_sidecar("terok-l0:test", tool_name="nonexistent")
+        content = render_l1_sidecar("terok-l0:test", family="deb", tool_name="nonexistent")
         assert "FROM" in content
         assert "coderabbit" not in content.lower()
 
@@ -616,7 +616,7 @@ class TestDetectFamily:
             # Ubuntu marker → deb
             ("nvcr.io/nvidia/nvhpc:25.9-devel-cuda13.0-ubuntu24.04", "deb"),
             ("nvidia/cuda:12.4.1-devel-ubuntu24.04", "deb"),
-            # UBI marker → rpm (the case the previous static map got wrong)
+            # UBI marker → rpm
             ("nvcr.io/nvidia/cuda:13.0.0-devel-ubi9", "rpm"),
             ("nvidia/cuda:12.4.0-devel-ubi8", "rpm"),
             # No marker → deb (historical NVIDIA convention)
@@ -640,12 +640,10 @@ class TestDetectFamily:
         assert detect_family(base_image) in {"deb", "rpm"}
 
     def test_registry_port_does_not_confuse_tag_parser(self) -> None:
-        # The fix preserves the registry port in the parsed name.  The
-        # private-registry mirror still doesn't match a known prefix, so
-        # the user sets ``family:`` explicitly.
+        # Registry ports are preserved in the parsed name; private mirrors
+        # don't match a known prefix, so the user sets ``family:`` explicitly.
         with pytest.raises(BuildError, match="Cannot infer package family"):
             detect_family("localhost:5000/ubuntu:24.04")
-        # … and the override path works.
         assert detect_family("localhost:5000/ubuntu:24.04", override="deb") == "deb"
 
     def test_override_wins(self) -> None:

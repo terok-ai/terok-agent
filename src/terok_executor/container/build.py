@@ -40,6 +40,7 @@ import shlex
 import shutil
 import subprocess
 import time
+from collections.abc import Callable
 from dataclasses import dataclass
 from importlib import resources
 from pathlib import Path
@@ -52,26 +53,34 @@ DEFAULT_BASE_IMAGE = "ubuntu:24.04"
 _DEFAULT_TAG = "ubuntu-24.04"
 """Pre-sanitized tag fragment for the default base image."""
 
-# Known base-image prefixes mapped to their package family.  NVIDIA is
-# handled separately because the same image path ships both Ubuntu (apt)
-# and UBI (dnf) flavours — the tag suffix decides.
+# Map of known base-image prefixes to their package family.  Each entry
+# is either a literal ``"deb"``/``"rpm"`` or a tag-aware resolver — used
+# for NVIDIA, where the same repo path ships both Ubuntu (apt) and UBI
+# (dnf) variants and only the tag distinguishes them.
 # "Officially tested" (per AGENTS.md): ubuntu:24.04, fedora:43,
 # quay.io/containers/podman, nvcr.io/nvidia/nvhpc.  Other images in the
-# same family path will be matched but are unsupported.
-_KNOWN_FAMILIES: tuple[tuple[str, str], ...] = (
+# same family path will match but are unsupported.
+_NVIDIA_UBI_TAG_RE: re.Pattern[str] = re.compile(r"ubi\d+", re.IGNORECASE)
+
+
+def _nvidia_family(tag: str) -> str:
+    """Pick the family for a matched NVIDIA image from its *tag*.
+
+    NVIDIA tags carry an explicit ``ubuntu`` or ``ubi[N]`` marker; absence
+    of either is treated as the historical default of Ubuntu (``deb``).
+    """
+    return "rpm" if _NVIDIA_UBI_TAG_RE.search(tag) else "deb"
+
+
+_KNOWN_FAMILIES: tuple[tuple[str, str | Callable[[str], str]], ...] = (
     ("registry.fedoraproject.org/fedora", "rpm"),
     ("quay.io/containers/podman", "rpm"),
+    ("nvcr.io/nvidia", _nvidia_family),
+    ("nvidia", _nvidia_family),
     ("ubuntu", "deb"),
     ("debian", "deb"),
     ("fedora", "rpm"),
 )
-
-# NVIDIA images come in both Ubuntu and UBI variants under the same
-# repository path; the tag carries the marker that distinguishes them.
-_NVIDIA_PREFIXES: tuple[str, ...] = ("nvidia/", "nvcr.io/nvidia/")
-_NVIDIA_UBI_TAG_RE: re.Pattern[str] = re.compile(r"ubi\d*", re.IGNORECASE)
-
-_VALID_FAMILIES: frozenset[str] = frozenset({"deb", "rpm"})
 
 
 class BuildError(RuntimeError):
@@ -113,17 +122,14 @@ def detect_family(base_image: str, override: str | None = None) -> str:
     with a hint to set ``family:`` explicitly.
     """
     if override is not None:
-        if override not in _VALID_FAMILIES:
+        if override not in {"deb", "rpm"}:
             raise BuildError(f"family must be 'deb' or 'rpm', got {override!r}")
         return override
     name, tag = _split_image_ref(_normalize_base_image(base_image))
     name_lc = name.lower()
-    if any(name_lc.startswith(prefix) for prefix in _NVIDIA_PREFIXES):
-        # UBI tag → rpm; Ubuntu tag (or no marker) → deb.
-        return "rpm" if _NVIDIA_UBI_TAG_RE.search(tag) else "deb"
     for prefix, fam in _KNOWN_FAMILIES:
         if name_lc == prefix or name_lc.startswith(prefix + "/"):
-            return fam
+            return fam(tag) if callable(fam) else fam
     raise BuildError(
         f"Cannot infer package family for base image {base_image!r}. "
         "Set `family: deb` or `family: rpm` under image: in project.yml."
@@ -370,13 +376,14 @@ def render_l0(base_image: str = DEFAULT_BASE_IMAGE, *, family: str | None = None
     )
 
 
-def render_l1(l0_image: str, *, family: str = "deb", cache_bust: str = "0") -> str:
+def render_l1(l0_image: str, *, family: str, cache_bust: str = "0") -> str:
     """Render the L1 (agent CLI) Dockerfile.
 
     *l0_image* is the tag of the L0 image to build on top of.  *family*
-    (``"deb"`` or ``"rpm"``) selects the package-manager branch of the
-    template — defaults to ``"deb"`` for callers that don't yet thread
-    the value through.  *cache_bust* invalidates the agent-install
+    (``"deb"`` or ``"rpm"``) selects the package-manager branch and is
+    required — there is no L0 reference to detect from at this point,
+    so callers must supply the value resolved at the L0 level (typically
+    via :func:`detect_family`).  *cache_bust* invalidates the agent-install
     layers when changed (typically set to a Unix timestamp).
     """
     return _render_template(
@@ -388,16 +395,16 @@ def render_l1(l0_image: str, *, family: str = "deb", cache_bust: str = "0") -> s
 def render_l1_sidecar(
     l0_image: str,
     *,
-    family: str = "deb",
+    family: str,
     tool_name: str = "coderabbit",
     cache_bust: str = "0",
 ) -> str:
     """Render the L1 sidecar (tool-only) Dockerfile.
 
     The sidecar image is built FROM L0 (not L1) and installs a single
-    tool binary — no agent CLIs, no LLMs.  *family* selects the
-    package-manager branch; *tool_name* selects which tool install block
-    to activate via Jinja2 conditional.
+    tool binary — no agent CLIs, no LLMs.  *family* (required) selects
+    the package-manager branch; *tool_name* selects which tool install
+    block to activate via Jinja2 conditional.
     """
     return _render_template(
         "l1.sidecar.Dockerfile.template",
