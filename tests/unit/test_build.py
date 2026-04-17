@@ -15,6 +15,7 @@ from terok_executor.container.build import (
     ImageSet,
     _base_tag,
     _normalize_base_image,
+    _split_image_ref,
     build_base_images,
     build_sidecar_image,
     detect_family,
@@ -565,6 +566,33 @@ class TestBuildSidecarImage:
 # ---------------------------------------------------------------------------
 
 
+class TestSplitImageRef:
+    """Verify port-aware OCI ref parsing in :func:`_split_image_ref`."""
+
+    @pytest.mark.parametrize(
+        ("ref", "expected"),
+        [
+            # Plain refs
+            ("ubuntu:24.04", ("ubuntu", "24.04")),
+            ("ubuntu", ("ubuntu", "")),
+            ("nvcr.io/nvidia/cuda:13.0.0-devel-ubi9", ("nvcr.io/nvidia/cuda", "13.0.0-devel-ubi9")),
+            # Registry ports — colon before the last '/' is *not* a tag
+            ("localhost:5000/ubuntu:24.04", ("localhost:5000/ubuntu", "24.04")),
+            ("localhost:5000/ubuntu", ("localhost:5000/ubuntu", "")),
+            ("myreg.example.com:8443/fedora:43", ("myreg.example.com:8443/fedora", "43")),
+            # Digests (everything after '@' is dropped before tag parsing)
+            ("ubuntu@sha256:abc", ("ubuntu", "")),
+            ("fedora:43@sha256:abc", ("fedora", "43")),
+            (
+                "localhost:5000/ubuntu:24.04@sha256:abc",
+                ("localhost:5000/ubuntu", "24.04"),
+            ),
+        ],
+    )
+    def test_split(self, ref: str, expected: tuple[str, str]) -> None:
+        assert _split_image_ref(ref) == expected
+
+
 class TestDetectFamily:
     """Verify the deb/rpm allowlist + override behaviour."""
 
@@ -574,8 +602,6 @@ class TestDetectFamily:
             ("ubuntu:24.04", "deb"),
             ("ubuntu", "deb"),
             ("debian:12", "deb"),
-            ("nvcr.io/nvidia/nvhpc:25.9-devel-cuda13.0-ubuntu24.04", "deb"),
-            ("nvidia/cuda:12.4.1-devel-ubuntu24.04", "deb"),
             ("fedora:43", "rpm"),
             ("registry.fedoraproject.org/fedora:43", "rpm"),
             ("quay.io/containers/podman:latest", "rpm"),
@@ -583,6 +609,44 @@ class TestDetectFamily:
     )
     def test_known_prefixes(self, base_image: str, expected: str) -> None:
         assert detect_family(base_image) == expected
+
+    @pytest.mark.parametrize(
+        ("base_image", "expected"),
+        [
+            # Ubuntu marker → deb
+            ("nvcr.io/nvidia/nvhpc:25.9-devel-cuda13.0-ubuntu24.04", "deb"),
+            ("nvidia/cuda:12.4.1-devel-ubuntu24.04", "deb"),
+            # UBI marker → rpm (the case the previous static map got wrong)
+            ("nvcr.io/nvidia/cuda:13.0.0-devel-ubi9", "rpm"),
+            ("nvidia/cuda:12.4.0-devel-ubi8", "rpm"),
+            # No marker → deb (historical NVIDIA convention)
+            ("nvidia/cuda:latest", "deb"),
+            ("nvcr.io/nvidia/pytorch:25.04-py3", "deb"),
+        ],
+    )
+    def test_nvidia_disambiguates_via_tag(self, base_image: str, expected: str) -> None:
+        assert detect_family(base_image) == expected
+
+    @pytest.mark.parametrize(
+        "base_image",
+        [
+            # Digest-only refs — tag parsing must not consume the digest.
+            "ubuntu@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+            "fedora:43@sha256:0123456789abcdef",
+        ],
+    )
+    def test_digest_refs_do_not_break_detection(self, base_image: str) -> None:
+        # Just assert it doesn't raise and returns something sensible.
+        assert detect_family(base_image) in {"deb", "rpm"}
+
+    def test_registry_port_does_not_confuse_tag_parser(self) -> None:
+        # The fix preserves the registry port in the parsed name.  The
+        # private-registry mirror still doesn't match a known prefix, so
+        # the user sets ``family:`` explicitly.
+        with pytest.raises(BuildError, match="Cannot infer package family"):
+            detect_family("localhost:5000/ubuntu:24.04")
+        # … and the override path works.
+        assert detect_family("localhost:5000/ubuntu:24.04", override="deb") == "deb"
 
     def test_override_wins(self) -> None:
         # Override forces the family even when the prefix would resolve
@@ -719,3 +783,39 @@ class TestBuildBaseImagesFamily:
             build_base_images("rockylinux:9", family="rpm", build_dir=build_dir)
 
         assert "dnf install" in (build_dir / "L0.Dockerfile").read_text()
+
+    def test_cached_unknown_image_skips_family_detection(self) -> None:
+        """The fast-path early return must not invoke detect_family.
+
+        Otherwise a prebuilt L0+L1 for an unknown base would fail to be
+        reused unless the user re-supplies ``family:`` on every call.
+        """
+        from unittest.mock import patch
+
+        with (
+            patch("terok_executor.container.build._check_podman"),
+            patch("terok_executor.container.build._image_exists", return_value=True),
+            patch("terok_executor.container.build.detect_family") as mock_detect,
+        ):
+            result = build_base_images("rockylinux:9")
+
+        assert result.l0.endswith(":rockylinux-9")
+        assert result.l1.endswith(":rockylinux-9")
+        mock_detect.assert_not_called()
+
+
+class TestBuildSidecarImageFamily:
+    """Verify the same fast-path applies to the sidecar build."""
+
+    def test_cached_unknown_image_skips_family_detection(self) -> None:
+        from unittest.mock import patch
+
+        with (
+            patch("terok_executor.container.build._check_podman"),
+            patch("terok_executor.container.build._image_exists", return_value=True),
+            patch("terok_executor.container.build.detect_family") as mock_detect,
+        ):
+            tag = build_sidecar_image("rockylinux:9")
+
+        assert tag.endswith(":rockylinux-9")
+        mock_detect.assert_not_called()

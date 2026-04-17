@@ -52,20 +52,24 @@ DEFAULT_BASE_IMAGE = "ubuntu:24.04"
 _DEFAULT_TAG = "ubuntu-24.04"
 """Pre-sanitized tag fragment for the default base image."""
 
-# Known base-image prefixes mapped to their package family.  Order matters
-# only for prefixes that share a leading segment — there are none here.
+# Known base-image prefixes mapped to their package family.  NVIDIA is
+# handled separately because the same image path ships both Ubuntu (apt)
+# and UBI (dnf) flavours — the tag suffix decides.
 # "Officially tested" (per AGENTS.md): ubuntu:24.04, fedora:43,
 # quay.io/containers/podman, nvcr.io/nvidia/nvhpc.  Other images in the
 # same family path will be matched but are unsupported.
 _KNOWN_FAMILIES: tuple[tuple[str, str], ...] = (
     ("registry.fedoraproject.org/fedora", "rpm"),
     ("quay.io/containers/podman", "rpm"),
-    ("nvcr.io/nvidia", "deb"),
-    ("nvidia", "deb"),
     ("ubuntu", "deb"),
     ("debian", "deb"),
     ("fedora", "rpm"),
 )
+
+# NVIDIA images come in both Ubuntu and UBI variants under the same
+# repository path; the tag carries the marker that distinguishes them.
+_NVIDIA_PREFIXES: tuple[str, ...] = ("nvidia/", "nvcr.io/nvidia/")
+_NVIDIA_UBI_TAG_RE: re.Pattern[str] = re.compile(r"ubi\d*", re.IGNORECASE)
 
 _VALID_FAMILIES: frozenset[str] = frozenset({"deb", "rpm"})
 
@@ -103,21 +107,43 @@ def detect_family(base_image: str, override: str | None = None) -> str:
 
     Detection matches a small allowlist of known image prefixes
     (Ubuntu/Debian, Fedora, the official Podman container, NVIDIA CUDA/HPC
-    SDK).  Unknown images raise :class:`BuildError` with a hint to set
-    ``family:`` explicitly.
+    SDK).  NVIDIA images are inspected at the tag level so UBI variants
+    (e.g. ``…:13.0.0-devel-ubi9``) resolve to ``rpm`` while Ubuntu
+    variants resolve to ``deb``.  Unknown images raise :class:`BuildError`
+    with a hint to set ``family:`` explicitly.
     """
     if override is not None:
         if override not in _VALID_FAMILIES:
             raise BuildError(f"family must be 'deb' or 'rpm', got {override!r}")
         return override
-    name = _normalize_base_image(base_image).split(":", 1)[0].lower()
+    name, tag = _split_image_ref(_normalize_base_image(base_image))
+    name_lc = name.lower()
+    if any(name_lc.startswith(prefix) for prefix in _NVIDIA_PREFIXES):
+        # UBI tag → rpm; Ubuntu tag (or no marker) → deb.
+        return "rpm" if _NVIDIA_UBI_TAG_RE.search(tag) else "deb"
     for prefix, fam in _KNOWN_FAMILIES:
-        if name == prefix or name.startswith(prefix + "/"):
+        if name_lc == prefix or name_lc.startswith(prefix + "/"):
             return fam
     raise BuildError(
         f"Cannot infer package family for base image {base_image!r}. "
         "Set `family: deb` or `family: rpm` under image: in project.yml."
     )
+
+
+def _split_image_ref(ref: str) -> tuple[str, str]:
+    """Split an OCI image reference into ``(name_without_tag, tag)``.
+
+    Strips an optional ``@digest`` suffix first, then peels off the
+    trailing ``:tag`` only when the last ``:`` lies after the last ``/``
+    — so ``localhost:5000/ubuntu:24.04`` keeps the registry port intact
+    in *name* and yields ``"24.04"`` as *tag*.  Refs without a tag
+    return an empty string for *tag*.
+    """
+    name = ref.split("@", 1)[0]  # drop digest
+    if name.rfind(":") > name.rfind("/"):
+        name, _, tag = name.rpartition(":")
+        return name, tag
+    return name, ""
 
 
 def build_base_images(
@@ -155,14 +181,17 @@ def build_base_images(
     _check_podman()
 
     base_image = _normalize_base_image(base_image)
-    fam = detect_family(base_image, override=family)
     l0_tag = l0_image_tag(base_image)
     l1_tag = l1_image_tag(base_image)
 
-    # Skip if both images exist and no forced rebuild
+    # Skip if both images exist and no forced rebuild — done before
+    # detect_family() so cached images for unknown bases (built earlier
+    # with explicit family) can still be reused without supplying it again.
     if not rebuild and not full_rebuild:
         if _image_exists(l0_tag) and _image_exists(l1_tag):
             return ImageSet(l0=l0_tag, l1=l1_tag)
+
+    fam = detect_family(base_image, override=family)
 
     # Prepare build context in a safe directory
     import tempfile
@@ -252,12 +281,16 @@ def build_sidecar_image(
     _check_podman()
 
     base_image = _normalize_base_image(base_image)
-    fam = detect_family(base_image, override=family)
     l0_tag = l0_image_tag(base_image)
     sidecar_tag = l1_sidecar_image_tag(base_image)
 
+    # Same fast-path as build_base_images: defer detect_family until we
+    # know we actually need to render Dockerfiles, so cached sidecars
+    # for unknown bases can be reused without re-supplying ``family``.
     if not rebuild and not full_rebuild and _image_exists(sidecar_tag) and _image_exists(l0_tag):
         return sidecar_tag
+
+    fam = detect_family(base_image, override=family)
 
     # Ensure L0 exists (build if needed)
     if not _image_exists(l0_tag) or full_rebuild:
