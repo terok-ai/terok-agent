@@ -113,10 +113,10 @@ RUN mkdir -p "$NPM_CONFIG_PREFIX" && npm config set prefix "$NPM_CONFIG_PREFIX"
 USER root
 RUN rm -rf /tmp/terok-scripts && \
     mkdir -p /etc/terok && \
-    printf 'TEROK_INSTALLED_AGENTS=%s\n' '{{ installed_agents_csv }}' > /etc/terok/installed.env
+    printf 'TEROK_INSTALLED_AGENTS=%s\n' '{{ installed_agents_csv }}' > {{ installed_env_path }}
 USER dev
 
-LABEL ai.terok.agents="{{ installed_agents_csv }}"
+LABEL {{ agents_label }}="{{ installed_agents_csv }}"
 
 WORKDIR /workspace
 # No CMD: reuse init-ssh-and-repo.sh from base image

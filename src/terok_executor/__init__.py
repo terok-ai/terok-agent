@@ -33,7 +33,9 @@ from .commands import COMMANDS as AGENT_COMMANDS, CommandDef
 
 # -- Container (build, env assembly, runner) -----------------------------------
 from .container.build import (
+    AGENTS_LABEL,
     DEFAULT_BASE_IMAGE,
+    INSTALLED_ENV_PATH,
     BuildError,
     ImageSet,
     build_base_images,
@@ -149,7 +151,9 @@ __all__ = [
     "ConfigStack",
     "resolve_provider_value",
     # Build: image construction + resource staging
+    "AGENTS_LABEL",
     "DEFAULT_BASE_IMAGE",
+    "INSTALLED_ENV_PATH",
     "BuildError",
     "ImageSet",
     "build_base_images",

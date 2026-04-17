@@ -23,7 +23,7 @@ import sys
 from dataclasses import dataclass, field
 from functools import lru_cache
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal
 
 from terok_sandbox.config_stack import deep_merge
 
@@ -133,20 +133,18 @@ class InstallSpec:
     """Dockerfile fragment emitted in the dev-user section of the L1 image."""
 
 
+HelpSection = Literal["agent", "dev_tool"]
+"""Section in the in-container help banner that an entry belongs to."""
+
+
 @dataclass(frozen=True)
 class HelpSpec:
-    """One-line entry shown by the in-container ``hilfe`` help banner.
-
-    Build emits a pre-rendered fragment per section (``agent`` or
-    ``dev_tool``) into ``/usr/local/share/terok/help.d/``; ``hilfe``
-    just ``cat``s them — no per-script template logic.
-    """
+    """One-line entry shown in the in-container help banner."""
 
     label: str = ""
     """Raw banner line (the agent owns its formatting, including ANSI codes)."""
 
-    section: str = "agent"
-    """Banner section: ``"agent"`` (default) or ``"dev_tool"``."""
+    section: HelpSection = "agent"
 
 
 @dataclass(frozen=True)
@@ -792,6 +790,9 @@ def _to_install_spec(name: str, data: dict) -> InstallSpec | None:
     )
 
 
+_HELP_SECTIONS: frozenset[str] = frozenset({"agent", "dev_tool"})
+
+
 def _to_help_spec(name: str, data: dict) -> HelpSpec | None:
     """Parse the optional ``help:`` YAML section into a :class:`HelpSpec`."""
     h = data.get("help")
@@ -799,7 +800,10 @@ def _to_help_spec(name: str, data: dict) -> HelpSpec | None:
         return None
     if not isinstance(h, dict):
         raise ValueError(f"Agent {name!r}: help must be a mapping, got {type(h).__name__}")
-    return HelpSpec(
-        label=h.get("label", "") or "",
-        section=h.get("section", "agent") or "agent",
-    )
+    section = h.get("section") or "agent"
+    if section not in _HELP_SECTIONS:
+        raise ValueError(
+            f"Agent {name!r}: help.section must be one of "
+            f"{sorted(_HELP_SECTIONS)!r}, got {section!r}"
+        )
+    return HelpSpec(label=h.get("label", "") or "", section=section)

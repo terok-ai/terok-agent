@@ -57,6 +57,15 @@ from pathlib import Path
 DEFAULT_BASE_IMAGE = "ubuntu:24.04"
 """Default base OS image when none is specified."""
 
+AGENTS_LABEL = "ai.terok.agents"
+"""OCI label naming the roster entries baked into an L1 image."""
+
+INSTALLED_ENV_PATH = "/etc/terok/installed.env"
+"""In-container env file that scripts source to learn what's installed."""
+
+_HELP_SECTION_FILES: dict[str, str] = {"agent": "agents.txt", "dev_tool": "dev-tools.txt"}
+"""Maps each :class:`~terok_executor.roster.loader.HelpSection` to its fragment filename."""
+
 _DEFAULT_TAG = "ubuntu-24.04"
 """Pre-sanitized tag fragment for the default base image."""
 
@@ -190,7 +199,7 @@ def build_base_images(
 
     l0_tag = l0_image_tag(base_image)
     l1_tag = l1_image_tag(base_image, selected)
-    l1_alias = l1_image_tag(base_image)  # unsuffixed "latest" alias
+    l1_alias = l1_image_tag(base_image)
 
     # Skip if both images exist and no forced rebuild — done before
     # detect_family() so cached images for unknown bases (built earlier
@@ -233,9 +242,9 @@ def build_base_images(
         print("$", shlex.join(cmd_l0))
         subprocess.run(cmd_l0, check=True)
 
-        # Build L1 — agent CLI layer (selected agents, shell env, ACP wrappers).
-        # Tagged twice: with the agent-set suffix (addressable, coexists with
-        # other selections) and with the unsuffixed alias (most-recent build).
+        # The unsuffixed alias lets `terok run` find the latest L1 without
+        # knowing the agent-set suffix; the suffixed tag keeps prior selections
+        # individually addressable.
         cmd_l1 = ["podman", "build", "-f", str(context / "L1.cli.Dockerfile")]
         cmd_l1 += ["--build-arg", f"BASE_IMAGE={l0_tag}"]
         cmd_l1 += ["--build-arg", f"AGENT_CACHE_BUST={cache_bust}"]
@@ -406,8 +415,6 @@ def render_l1(
     from terok_executor.roster.loader import get_roster
 
     roster = get_roster()
-    # resolve_selection is idempotent on already-expanded tuples, so callers
-    # may pass either a raw user selection or a pre-resolved one.
     selected = roster.resolve_selection(agents)
     installs = roster.installs
 
@@ -427,6 +434,8 @@ def render_l1(
             "install_root_snippets": root_snippets,
             "install_dev_snippets": dev_snippets,
             "installed_agents_csv": ",".join(selected),
+            "agents_label": AGENTS_LABEL,
+            "installed_env_path": INSTALLED_ENV_PATH,
         },
     )
 
@@ -505,15 +514,12 @@ def stage_help_fragments(dest: Path, agents: tuple[str, ...]) -> None:
             continue
         by_section.setdefault(spec.section, []).append(spec.label)
 
-    section_files = {"agent": "agents.txt", "dev_tool": "dev-tools.txt"}
-
     if dest.exists():
         shutil.rmtree(dest)
     dest.mkdir(parents=True, exist_ok=True)
     for section, lines in by_section.items():
-        filename = section_files.get(section, f"{section}.txt")
         decoded = "".join(bytes(line, "utf-8").decode("unicode_escape") + "\n" for line in lines)
-        (dest / filename).write_text(decoded, encoding="utf-8")
+        (dest / _HELP_SECTION_FILES[section]).write_text(decoded, encoding="utf-8")
 
 
 def stage_tmux_config(dest: Path) -> None:
