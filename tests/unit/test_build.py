@@ -604,7 +604,8 @@ class TestDetectFamily:
             ("debian:12", "deb"),
             ("fedora:43", "rpm"),
             ("registry.fedoraproject.org/fedora:43", "rpm"),
-            ("quay.io/containers/podman:latest", "rpm"),
+            ("quay.io/podman/stable:latest", "rpm"),
+            ("quay.io/podman/upstream:latest", "rpm"),
         ],
     )
     def test_known_prefixes(self, base_image: str, expected: str) -> None:
@@ -688,7 +689,7 @@ class TestRenderFamilyAware:
         assert "DEBIAN_FRONTEND" not in content
 
     def test_l0_podman_image_is_rpm(self) -> None:
-        content = render_l0("quay.io/containers/podman:latest")
+        content = render_l0("quay.io/podman/stable:latest")
         assert "dnf install" in content
         assert "apt-get" not in content
 

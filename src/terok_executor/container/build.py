@@ -58,7 +58,7 @@ _DEFAULT_TAG = "ubuntu-24.04"
 # for NVIDIA, where the same repo path ships both Ubuntu (apt) and UBI
 # (dnf) variants and only the tag distinguishes them.
 # "Officially tested" (per AGENTS.md): ubuntu:24.04, fedora:43,
-# quay.io/containers/podman, nvcr.io/nvidia/nvhpc.  Other images in the
+# quay.io/podman/stable, nvcr.io/nvidia/nvhpc.  Other images in the
 # same family path will match but are unsupported.
 _NVIDIA_UBI_TAG_RE: re.Pattern[str] = re.compile(r"ubi\d+", re.IGNORECASE)
 
@@ -74,7 +74,7 @@ def _nvidia_family(tag: str) -> str:
 
 _KNOWN_FAMILIES: tuple[tuple[str, str | Callable[[str], str]], ...] = (
     ("registry.fedoraproject.org/fedora", "rpm"),
-    ("quay.io/containers/podman", "rpm"),
+    ("quay.io/podman", "rpm"),
     ("nvcr.io/nvidia", _nvidia_family),
     ("nvidia", _nvidia_family),
     ("ubuntu", "deb"),
