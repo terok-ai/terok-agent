@@ -36,6 +36,12 @@ RUN set -eux; \
       if getent group "$uid_owner" >/dev/null; then groupmod -n dev "$uid_owner" || true; fi; \
       usermod -l dev "$uid_owner"; \
       usermod -d /home/dev -m dev; \
+      # usermod -l / groupmod -n don't touch /etc/sub{u,g}id; rewrite \
+      # those entries so pre-configured rootless ranges (e.g. the podman \
+      # image's `podman:100000:65536`) keep working under the new name. \
+      for f in /etc/subuid /etc/subgid; do \
+        [ -f "$f" ] && sed -i "s/^${uid_owner}:/dev:/" "$f"; \
+      done; \
     fi; \
     if ! getent group dev >/dev/null; then \
       groupadd dev; \
