@@ -15,6 +15,7 @@ from .loader import (
     ensure_proxy_routes,
     get_roster,
     load_roster,
+    parse_agent_selection,
 )
 
 __all__ = [
@@ -25,4 +26,5 @@ __all__ = [
     "ensure_proxy_routes",
     "get_roster",
     "load_roster",
+    "parse_agent_selection",
 ]

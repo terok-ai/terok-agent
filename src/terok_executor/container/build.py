@@ -49,8 +49,11 @@ import subprocess
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
+from functools import lru_cache
 from importlib import resources
 from pathlib import Path
+
+from jinja2 import BaseLoader, Environment
 
 # ── Vocabulary ──
 
@@ -638,6 +641,14 @@ def _base_tag(base_image: str) -> str:
     return tag
 
 
+@lru_cache(maxsize=1)
+def _jinja_env() -> Environment:
+    """Shared stateless Jinja2 environment for all Dockerfile rendering."""
+    return Environment(  # nosec B701 — Dockerfile output, not HTML
+        loader=BaseLoader(), keep_trailing_newline=True, autoescape=False
+    )
+
+
 def _render_template(template_name: str, variables: dict[str, str]) -> str:
     """Render a Jinja2 Dockerfile template from package resources.
 
@@ -645,34 +656,19 @@ def _render_template(template_name: str, variables: dict[str, str]) -> str:
     branch on a ``family`` variable (``deb``/``rpm``); the L1 template
     also iterates over pre-rendered per-agent install snippets.
     """
-    from jinja2 import BaseLoader, Environment
-
     raw = (resources.files("terok_executor") / "resources" / "templates" / template_name).read_text(
         encoding="utf-8"
     )
-    env = Environment(  # nosec B701 — Dockerfile output, not HTML
-        loader=BaseLoader(), keep_trailing_newline=True, autoescape=False
-    )
-    tmpl = env.from_string(raw)
-    return tmpl.render(**variables)
+    return _jinja_env().from_string(raw).render(**variables)
 
 
 def _render_snippet(snippet: str, family: str) -> str:
-    """Render a per-agent install snippet as a Jinja string with *family* in scope.
+    """Render a per-agent install snippet with *family* in Jinja scope.
 
-    Roster install snippets are stored as plain Dockerfile text in each
-    agent YAML.  They may contain ``{% if family == "deb" %}…{% else %}…
-    {% endif %}`` branches so that package-manager-specific commands
-    (apt vs dnf, .deb vs .rpm download) live alongside the rest of the
-    agent's install steps.  Non-family-aware snippets pass through
-    unchanged.
+    Roster install snippets may contain ``{% if family == "deb" %}…{% else %}…
+    {% endif %}`` branches; non-family-aware snippets pass through unchanged.
     """
-    from jinja2 import BaseLoader, Environment
-
-    env = Environment(  # nosec B701 — Dockerfile output, not HTML
-        loader=BaseLoader(), keep_trailing_newline=True, autoescape=False
-    )
-    return env.from_string(snippet).render(family=family)
+    return _jinja_env().from_string(snippet).render(family=family)
 
 
 def _copy_package_tree(package: str, rel_path: str, dest: Path) -> None:

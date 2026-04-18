@@ -255,10 +255,9 @@ def _handle_build(
 ) -> None:
     """Build L0+L1 container images (optionally include sidecar L1)."""
     from .container.build import BuildError, build_base_images, build_sidecar_image
+    from .roster.loader import parse_agent_selection
 
-    selection: str | tuple[str, ...] = "all"
-    if agents != "all":
-        selection = tuple(name.strip() for name in agents.split(",") if name.strip())
+    selection = parse_agent_selection(agents)
 
     try:
         images = build_base_images(

@@ -23,7 +23,7 @@ import sys
 from dataclasses import dataclass, field
 from functools import lru_cache
 from pathlib import Path
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING, Literal, get_args
 
 from terok_sandbox.config_stack import deep_merge
 
@@ -135,6 +135,9 @@ class InstallSpec:
 
 HelpSection = Literal["agent", "dev_tool"]
 """Section in the in-container help banner that an entry belongs to."""
+
+HELP_SECTIONS: tuple[HelpSection, ...] = get_args(HelpSection)
+"""All valid :data:`HelpSection` values, as a tuple (single source of truth)."""
 
 
 @dataclass(frozen=True)
@@ -375,6 +378,23 @@ class AgentRoster:
 def get_roster() -> AgentRoster:
     """Return the singleton roster instance (loaded once, cached)."""
     return load_roster()
+
+
+def parse_agent_selection(raw: str) -> str | tuple[str, ...]:
+    """Normalise a user-supplied agent selection string.
+
+    Accepts a comma-list (``"claude,codex"``) or the literal ``"all"``.
+    Whitespace is stripped, empty / whitespace-only entries dropped,
+    and case folded.  Empty or all-whitespace input collapses to
+    ``"all"`` — the same shape :meth:`AgentRoster.resolve_selection`
+    expects.  Unknown names are not checked here; ``resolve_selection``
+    does that.
+    """
+    folded = raw.strip().lower()
+    if folded == "all" or not folded:
+        return "all"
+    names = tuple(n.strip() for n in folded.split(",") if n.strip())
+    return names or "all"
 
 
 def load_roster() -> AgentRoster:
@@ -796,9 +816,6 @@ def _to_install_spec(name: str, data: dict) -> InstallSpec | None:
     )
 
 
-_HELP_SECTIONS: frozenset[str] = frozenset({"agent", "dev_tool"})
-
-
 def _to_help_spec(name: str, data: dict) -> HelpSpec | None:
     """Parse the optional ``help:`` YAML section into a :class:`HelpSpec`."""
     h = data.get("help")
@@ -807,9 +824,8 @@ def _to_help_spec(name: str, data: dict) -> HelpSpec | None:
     if not isinstance(h, dict):
         raise ValueError(f"Agent {name!r}: help must be a mapping, got {type(h).__name__}")
     section = h.get("section") or "agent"
-    if section not in _HELP_SECTIONS:
+    if section not in HELP_SECTIONS:
         raise ValueError(
-            f"Agent {name!r}: help.section must be one of "
-            f"{sorted(_HELP_SECTIONS)!r}, got {section!r}"
+            f"Agent {name!r}: help.section must be one of {list(HELP_SECTIONS)!r}, got {section!r}"
         )
     return HelpSpec(label=h.get("label", "") or "", section=section)

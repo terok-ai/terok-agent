@@ -89,7 +89,13 @@ from .provider.providers import (
 )
 
 # -- Roster (agent catalog + config resolution) --------------------------------
-from .roster import CredentialProxyRoute, SidecarSpec, ensure_proxy_routes, get_roster
+from .roster import (
+    CredentialProxyRoute,
+    SidecarSpec,
+    ensure_proxy_routes,
+    get_roster,
+    parse_agent_selection,
+)
 
 # -- Storage queries (filesystem footprint measurement) -------------------------
 from .storage import (
@@ -173,6 +179,7 @@ __all__ = [
     # Roster
     "SidecarSpec",
     "get_roster",
+    "parse_agent_selection",
     # Command registry
     "AGENT_COMMANDS",
     "PROXY_COMMANDS",
