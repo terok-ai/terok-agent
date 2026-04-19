@@ -43,6 +43,7 @@ class TestLoadBundledAgents:
     def test_loads_all_bundled_agents(self) -> None:
         agents = _load_bundled_agents()
         expected = {
+            "caddy",
             "claude",
             "coderabbit",
             "codex",
@@ -476,6 +477,25 @@ class TestDeserializeSidecar:
         reg = load_roster()
         with pytest.raises(SystemExit, match="No sidecar config"):
             reg.get_sidecar_spec("nonexistent")
+
+
+class TestWebIngress:
+    """Verify the ``web_ingress`` flag is surfaced via the roster."""
+
+    def test_toad_is_web_ingress(self) -> None:
+        reg = load_roster()
+        assert "toad" in reg.web_ingress
+
+    def test_non_web_agents_absent(self) -> None:
+        reg = load_roster()
+        assert "claude" not in reg.web_ingress
+        assert "caddy" not in reg.web_ingress
+
+    def test_toad_depends_on_caddy(self) -> None:
+        reg = load_roster()
+        # resolve_selection returns the canonical alphabetical tuple.
+        # Asserting the exact set guards against accidental extras creeping in.
+        assert reg.resolve_selection(("toad",)) == ("caddy", "toad")
 
 
 # ---------------------------------------------------------------------------

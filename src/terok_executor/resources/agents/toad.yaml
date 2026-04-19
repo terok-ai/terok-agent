@@ -9,6 +9,11 @@ kind: runtime
 label: Toad
 binary: toad
 
+# Host-published HTTP port gated by the Caddy sidecar; terok's launch
+# path reads this flag to allocate a port, drop a per-task token, and
+# render click-through links.
+web_ingress: true
+
 mounts:
   - host_dir: _toad-config
     container_path: /home/dev/.config/toad
@@ -18,12 +23,15 @@ install:
   # Toad needs Python ≥3.14; uv installs a standalone interpreter so the
   # system Python stays untouched.  The uv-created symlink is removed so
   # the wrapper at /usr/local/bin/toad takes precedence in PATH.
-  # toad-agents/ ships the bundled ACP launcher TOMLs.
+  # toad-agents/ ships the bundled ACP launcher TOMLs.  terok-toad-entry
+  # is the supervisor launched as the container command — it starts the
+  # Caddy auth gate before exec-ing toad on a loopback port.
+  depends_on: [caddy]
   run_as_root: |
     COPY toad-agents/ /usr/local/share/terok/toad-agents/
     RUN set -eux; \
-        cp /tmp/terok-scripts/toad /usr/local/bin/toad; \
-        chmod +x /usr/local/bin/toad
+        install -m 0755 /tmp/terok-scripts/toad /usr/local/bin/toad; \
+        install -m 0755 /tmp/terok-scripts/terok-toad-entry /usr/local/bin/terok-toad-entry
   run_as_dev: |
     RUN uv tool install batrachian-toad --python 3.14 \
      && rm -f ~/.local/bin/toad

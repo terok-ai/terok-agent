@@ -1,0 +1,39 @@
+# SPDX-FileCopyrightText: 2026 Jiri Vyskocil
+# SPDX-License-Identifier: Apache-2.0
+
+# Token-gated HTTP ingress for containerized web UIs (toad, Vibes, ...).
+# Env variables consumed at ``caddy run`` time:
+#   TOAD_TOKEN         — shared secret checked via CEL equality
+#   TOAD_UPSTREAM      — inner host:port the supervisor launched toad on
+#   TOAD_PUBLIC_PORT   — listener port (matches the supervisor's probe)
+{
+	auto_https off
+	admin off
+}
+
+:{$TOAD_PUBLIC_PORT:8080} {
+	# Literal equality via CEL expressions — avoids any regex-metacharacter
+	# risk from interpolated tokens.  Caddy resolves {$TOAD_TOKEN} at config
+	# load time, well before any request hits these matchers.
+	@authed expression `{http.request.cookie.terok_token} == "{$TOAD_TOKEN}"`
+	@seed expression `{http.request.uri.query.token} == "{$TOAD_TOKEN}"`
+
+	handle @authed {
+		reverse_proxy {$TOAD_UPSTREAM}
+	}
+
+	handle @seed {
+		# SameSite=Lax (not Strict): the seed link is frequently clicked
+		# from another origin — e.g. the parent terok-tui served over
+		# textual-serve on a different port — and Strict would withhold
+		# the cookie on the 303's follow-up request, dropping us back to
+		# @seed's own redirect → 401 loop.  Lax still blocks cross-site
+		# POST/subresource leaks.
+		header Set-Cookie "terok_token={$TOAD_TOKEN}; Path=/; HttpOnly; SameSite=Lax"
+		redir {path} 303
+	}
+
+	handle {
+		respond "Unauthorized" 401
+	}
+}

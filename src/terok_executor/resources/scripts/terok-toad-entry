@@ -1,0 +1,79 @@
+#!/usr/bin/env bash
+# SPDX-FileCopyrightText: 2026 Jiri Vyskocil
+# SPDX-License-Identifier: Apache-2.0
+#
+# Supervisor wrapper: bootstraps the workspace, starts Caddy as an auth
+# gate on port 8080, launches toad on loopback, waits for both to bind,
+# then signals readiness via the ``TEROK_READY`` marker that terok's
+# host-side readiness check greps for.
+
+set -euo pipefail
+
+TOKEN_FILE="${TOAD_TOKEN_FILE:-/home/dev/.terok/toad.token}"
+PUBLIC_PORT="${TOAD_PUBLIC_PORT:-8080}"
+INTERNAL_PORT="${TOAD_INTERNAL_PORT:-8081}"
+
+if [[ ! -r "$TOKEN_FILE" ]]; then
+    echo "terok-toad-entry: token file $TOKEN_FILE is missing or unreadable" >&2
+    exit 1
+fi
+TOAD_TOKEN="$(tr -d '\r\n' <"$TOKEN_FILE")"
+# Defence in depth against a hand-edited token file: terok mints
+# secrets.token_urlsafe(32) which is urlsafe-base64, but we still
+# reject anything outside [A-Za-z0-9_-] before exporting so stray
+# quotes/semicolons can't leak into the Caddyfile env expansion.
+if [[ -z "$TOAD_TOKEN" ]] || (( ${#TOAD_TOKEN} > 256 )) \
+   || [[ ! "$TOAD_TOKEN" =~ ^[A-Za-z0-9_-]+$ ]]; then
+    echo "terok-toad-entry: token in $TOKEN_FILE is empty or malformed" >&2
+    exit 1
+fi
+TOAD_UPSTREAM="127.0.0.1:${INTERNAL_PORT}"
+# Caddy's listener is ``:{$TOAD_PUBLIC_PORT:8080}``, so it sees the same
+# port our probe below waits for.
+export TOAD_TOKEN TOAD_UPSTREAM TOAD_PUBLIC_PORT
+
+# Workspace bootstrap (git clone/fetch, managed settings) — unchanged
+# from the pre-Caddy launch flow.
+init-ssh-and-repo.sh
+
+caddy run --config /etc/caddy/Caddyfile --adapter caddyfile &
+CADDY_PID=$!
+
+toad --serve -H 127.0.0.1 -p "$INTERNAL_PORT" "$@" &
+TOAD_PID=$!
+
+wait_for_port() {
+    local port="$1" retries=100
+    until (echo >"/dev/tcp/127.0.0.1/${port}") >/dev/null 2>&1; do
+        retries=$((retries - 1))
+        if (( retries <= 0 )); then
+            return 1
+        fi
+        sleep 0.2
+    done
+}
+
+if ! wait_for_port "$PUBLIC_PORT"; then
+    echo "terok-toad-entry: caddy failed to bind :${PUBLIC_PORT}" >&2
+    exit 1
+fi
+if ! wait_for_port "$INTERNAL_PORT"; then
+    echo "terok-toad-entry: toad failed to bind 127.0.0.1:${INTERNAL_PORT}" >&2
+    exit 1
+fi
+
+echo "TEROK_READY"
+
+# Exit when either child dies so a Caddy crash brings the container
+# down rather than leaving toad reachable without the auth gate.
+# ``wait -n`` needs Bash 4.3+; we're on Bash 5 in the images.  The
+# ``if`` block absorbs the non-zero exit under ``set -e``.
+if wait -n "$TOAD_PID" "$CADDY_PID"; then
+    EXIT=0
+else
+    EXIT=$?
+fi
+kill "$TOAD_PID" "$CADDY_PID" 2>/dev/null || true
+wait "$TOAD_PID" 2>/dev/null || true
+wait "$CADDY_PID" 2>/dev/null || true
+exit "$EXIT"
