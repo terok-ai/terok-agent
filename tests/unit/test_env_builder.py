@@ -46,16 +46,25 @@ def _make_vault_db(tmp_path: Path, cred_name: str = "claude", cred_data: dict | 
 
 
 def _make_vault_db_with_ssh_keys(tmp_path: Path, scope: str = "myproj"):
-    """Return a SandboxConfig with credential DB and SSH keys for *scope*."""
-    import json
+    """Return a SandboxConfig with credential DB seeded with a key assigned to *scope*."""
+    from terok_sandbox.credentials.db import CredentialDB
+    from terok_sandbox.credentials.ssh_keypair import generate_keypair
 
     cfg = _make_vault_db(tmp_path)
     cfg.vault_dir.mkdir(parents=True, exist_ok=True)
-    cfg.ssh_keys_json_path.write_text(
-        json.dumps(
-            {scope: [{"private_key": "/tmp/terok-testing/k", "public_key": "ssh-ed25519 AAAA"}]}
+    db = CredentialDB(cfg.db_path)
+    try:
+        kp = generate_keypair("ed25519", comment=f"tk-main:{scope}")
+        key_id = db.store_ssh_key(
+            key_type=kp.key_type,
+            private_pem=kp.private_pem,
+            public_blob=kp.public_blob,
+            comment=kp.comment,
+            fingerprint=kp.fingerprint,
         )
-    )
+        db.assign_ssh_key(scope, key_id)
+    finally:
+        db.close()
     return cfg
 
 
@@ -603,24 +612,26 @@ class TestVaultTokenInjection:
 
     def test_vault_ssh_only_no_provider_creds(self, workspace, envs_dir, roster, tmp_path):
         """SSH signer token injected even when no provider credentials are stored."""
-        import json
-
         from terok_sandbox import CredentialDB, SandboxConfig
+        from terok_sandbox.credentials.ssh_keypair import generate_keypair
 
         cfg = SandboxConfig(state_dir=tmp_path, vault_dir=tmp_path / "credentials")
         cfg.db_path.parent.mkdir(parents=True, exist_ok=True)
         cfg.vault_dir.mkdir(parents=True, exist_ok=True)
-        # DB exists but has NO provider credentials — only SSH keys
-        CredentialDB(cfg.db_path).close()
-        cfg.ssh_keys_json_path.write_text(
-            json.dumps(
-                {
-                    "sshonly": [
-                        {"private_key": "/tmp/terok-testing/k", "public_key": "ssh-ed25519 A"}
-                    ]
-                }
+        # DB exists with NO provider credentials — only SSH keys.
+        db = CredentialDB(cfg.db_path)
+        try:
+            kp = generate_keypair("ed25519", comment="tk-main:sshonly")
+            key_id = db.store_ssh_key(
+                key_type=kp.key_type,
+                private_pem=kp.private_pem,
+                public_blob=kp.public_blob,
+                comment=kp.comment,
+                fingerprint=kp.fingerprint,
             )
-        )
+            db.assign_ssh_key("sshonly", key_id)
+        finally:
+            db.close()
 
         spec = _spec(workspace, envs_dir, credential_scope="sshonly")
         with (
@@ -655,24 +666,6 @@ class TestVaultTokenInjection:
             pytest.raises(SystemExit, match="injection failed.*Check logs"),
         ):
             assemble_container_env(spec, roster, caller_manages_vault=False)
-
-    def test_vault_malformed_ssh_entry_warns(self, workspace, envs_dir, roster, tmp_path, caplog):
-        """Non-dict entries in ssh-keys.json trigger a warning, not a crash."""
-        import json
-
-        cfg = _make_vault_db(tmp_path)
-        cfg.vault_dir.mkdir(parents=True, exist_ok=True)
-        cfg.ssh_keys_json_path.write_text(json.dumps({"badproj": ["not-a-dict"]}))
-
-        spec = _spec(workspace, envs_dir, credential_scope="badproj")
-        with (
-            patch("terok_sandbox.is_vault_socket_active", return_value=True),
-            patch("terok_sandbox.SandboxConfig", return_value=cfg),
-        ):
-            result = assemble_container_env(spec, roster, caller_manages_vault=False)
-
-        assert "TEROK_SSH_SIGNER_TOKEN" not in result.env
-        assert any("Malformed entry" in r.message for r in caplog.records)
 
     def test_scan_leaked_creds_emits_warning(self, workspace, envs_dir, roster, caplog):
         """scan_leaked_creds=True logs warnings for leaked files."""

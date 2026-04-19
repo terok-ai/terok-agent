@@ -485,36 +485,17 @@ def _inject_vault_tokens(
     return env
 
 
-def _load_ssh_keys_json(path: Path) -> dict:
-    """Load the SSH key mapping JSON.  Returns empty dict on failure."""
-    import json
-
-    if not path.is_file():
-        return {}
-    try:
-        result = json.loads(path.read_text(encoding="utf-8"))
-        return result if isinstance(result, dict) else {}
-    except (json.JSONDecodeError, OSError, UnicodeDecodeError) as exc:
-        _logger.warning("Cannot read SSH keys file %s: %s", path, exc)
-        return {}
-
-
 def _load_ssh_signer_token(
     db: CredentialDB, cfg: SandboxConfig, scope: str, task_id: str
 ) -> str | None:
-    """Create an SSH signer phantom token if *scope* has valid keys registered."""
-    ssh_keys = _load_ssh_keys_json(cfg.ssh_keys_json_path)
-    ssh_entry = ssh_keys.get(scope)
-    if not isinstance(ssh_entry, list):
-        return None
-    for entry in ssh_entry:
-        if not isinstance(entry, dict):
-            _logger.warning(
-                "Malformed entry in ssh-keys.json for scope %r: expected dict, got %s",
-                scope,
-                type(entry).__name__,
-            )
-            return None
-    if any(e.get("private_key") and e.get("public_key") for e in ssh_entry):
+    """Mint an SSH signer phantom token when *scope* has at least one assigned key.
+
+    SSH keys live as rows in the vault's ``credentials.db`` (see
+    ``ssh_keys`` / ``ssh_key_assignments`` in terok-sandbox); no sidecar
+    JSON to consult.  *cfg* is retained for API symmetry — callers pass
+    it regardless, and future policy knobs may use it.
+    """
+    del cfg  # currently unused; part of a stable call-site signature
+    if db.list_ssh_keys_for_scope(scope):
         return db.create_token(scope, task_id, scope, "ssh")
     return None
