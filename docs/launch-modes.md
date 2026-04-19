@@ -48,7 +48,7 @@ the list of supported tools.
 ## Managing containers
 
 ```bash
-terok-executor ls              # list running containers
+terok-executor list            # list running containers
 terok-executor stop my-task    # stop a specific container
 ```
 

@@ -280,7 +280,7 @@ def _handle_build(
         print(f"L1 (sidecar): {tag}")
 
 
-def _handle_ls() -> None:
+def _handle_list() -> None:
     """List running terok-executor containers."""
     from terok_sandbox import get_container_states
 
@@ -463,7 +463,7 @@ BUILD_COMMAND = CommandDef(
     ),
 )
 
-LS_COMMAND = CommandDef(name="ls", help="List running containers", handler=_handle_ls)
+LIST_COMMAND = CommandDef(name="list", help="List running containers", handler=_handle_list)
 
 STOP_COMMAND = CommandDef(
     name="stop",
@@ -493,6 +493,6 @@ COMMANDS: tuple[CommandDef, ...] = (
     AGENTS_COMMAND,
     BUILD_COMMAND,
     SETUP_COMMAND,
-    LS_COMMAND,
+    LIST_COMMAND,
     STOP_COMMAND,
 )
