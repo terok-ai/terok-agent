@@ -11,9 +11,9 @@ from terok_executor.doctor import (
     _PHANTOM_TOKEN_RE,
     _make_base_url_checks,
     _make_credential_file_checks,
-    _make_gh_proxy_bridge_check,
     _make_phantom_token_checks,
     _make_ssh_bridge_check,
+    _make_vault_bridge_check,
     agent_doctor_checks,
 )
 from terok_executor.roster import get_roster
@@ -45,26 +45,49 @@ class TestSSHBridgeCheck:
         assert check.category == "bridge"
 
 
-class TestGhProxyBridgeCheck:
-    """gh token broker socat bridge liveness check."""
+class TestVaultBridgeCheck:
+    """Vault socat bridge liveness check — two probe shapes, one semantic role."""
 
-    def test_ok_when_alive(self) -> None:
-        check = _make_gh_proxy_bridge_check()
+    def test_socket_mode_ok_when_alive(self) -> None:
+        check = _make_vault_bridge_check(socket_mode=True)
         verdict = check.evaluate(0, "", "")
         assert verdict.severity == "ok"
 
-    def test_error_when_dead(self) -> None:
-        check = _make_gh_proxy_bridge_check()
+    def test_socket_mode_error_when_dead(self) -> None:
+        check = _make_vault_bridge_check(socket_mode=True)
         verdict = check.evaluate(1, "", "")
         assert verdict.severity == "error"
         assert verdict.fixable is True
 
+    def test_tcp_mode_ok_when_alive(self) -> None:
+        check = _make_vault_bridge_check(socket_mode=False)
+        verdict = check.evaluate(0, "", "")
+        assert verdict.severity == "ok"
+
+    def test_tcp_mode_error_when_dead(self) -> None:
+        check = _make_vault_bridge_check(socket_mode=False)
+        verdict = check.evaluate(1, "", "")
+        assert verdict.severity == "error"
+        assert verdict.fixable is True
+
+    def test_socket_mode_probes_mounted_vault_socket(self) -> None:
+        check = _make_vault_bridge_check(socket_mode=True)
+        probe = " ".join(check.probe_cmd)
+        assert "/run/terok/vault.sock" in probe
+        assert "vault-loopback.pid" in probe
+
+    def test_tcp_mode_probes_local_bridge_socket(self) -> None:
+        check = _make_vault_bridge_check(socket_mode=False)
+        probe = " ".join(check.probe_cmd)
+        assert "/tmp/terok-vault.sock" in probe
+        assert "vault-socket.pid" in probe
+
     def test_has_fix_cmd(self) -> None:
-        check = _make_gh_proxy_bridge_check()
+        check = _make_vault_bridge_check(socket_mode=True)
         assert check.fix_cmd is not None
 
     def test_category_is_bridge(self) -> None:
-        check = _make_gh_proxy_bridge_check()
+        check = _make_vault_bridge_check(socket_mode=True)
         assert check.category == "bridge"
 
 
@@ -169,18 +192,32 @@ class TestPhantomTokenChecks:
 class TestBaseUrlChecks:
     """Base URL override verification."""
 
-    def test_generates_checks(self) -> None:
+    def test_generates_checks_tcp(self) -> None:
         roster = get_roster()
         checks = _make_base_url_checks(roster, TOKEN_BROKER_PORT)
         assert len(checks) > 0
 
-    def test_ok_when_routed(self) -> None:
+    def test_generates_checks_socket(self) -> None:
+        roster = get_roster()
+        checks = _make_base_url_checks(roster, None)
+        assert len(checks) > 0
+
+    def test_tcp_ok_when_routed(self) -> None:
         roster = get_roster()
         checks = _make_base_url_checks(roster, TOKEN_BROKER_PORT)
         if checks:
             verdict = checks[0].evaluate(
                 0, f"http://host.containers.internal:{TOKEN_BROKER_PORT}\n", ""
             )
+            assert verdict.severity == "ok"
+
+    def test_socket_ok_when_routed(self) -> None:
+        from terok_executor.vault_addr import LOOPBACK_VAULT_PORT
+
+        roster = get_roster()
+        checks = _make_base_url_checks(roster, None)
+        if checks:
+            verdict = checks[0].evaluate(0, f"http://localhost:{LOOPBACK_VAULT_PORT}\n", "")
             assert verdict.severity == "ok"
 
     def test_error_when_bypassed(self) -> None:
@@ -225,14 +262,15 @@ class TestAgentDoctorChecks:
         categories = {c.category for c in checks}
         assert "env" in categories
 
-    def test_skips_base_url_without_port(self) -> None:
+    def test_base_url_checks_emitted_in_both_modes(self) -> None:
+        """Socket and TCP mode both need base-URL checks — the probe host differs."""
         roster = get_roster()
-        checks_with = agent_doctor_checks(roster, token_broker_port=TOKEN_BROKER_PORT)
-        checks_without = agent_doctor_checks(roster, token_broker_port=None)
-        base_url_with = [c for c in checks_with if "Base URL" in c.label]
-        base_url_without = [c for c in checks_without if "Base URL" in c.label]
-        assert len(base_url_with) > 0
-        assert len(base_url_without) == 0
+        checks_tcp = agent_doctor_checks(roster, token_broker_port=TOKEN_BROKER_PORT)
+        checks_socket = agent_doctor_checks(roster, token_broker_port=None)
+        base_url_tcp = [c for c in checks_tcp if "Base URL" in c.label]
+        base_url_socket = [c for c in checks_socket if "Base URL" in c.label]
+        assert len(base_url_tcp) > 0
+        assert len(base_url_socket) > 0
 
     def test_all_are_doctor_check_instances(self) -> None:
         roster = get_roster()

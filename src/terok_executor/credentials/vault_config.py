@@ -4,9 +4,18 @@
 """Patches provider config files to route API traffic through the vault.
 
 Applies ``shared_config_patch`` from the YAML roster after authentication
-and — crucially — on every task start.  Writes vault URLs (not secrets) to
-provider config files so that agents route API traffic through the
+and — crucially — on every task start.  Writes vault URLs / socket paths
+(not secrets) to provider config files so agents route traffic through the
 vault instead of hitting upstream directly with phantom tokens.
+
+Two template tokens are substituted into patch values:
+
+- ``{vault_url}``    — HTTP URL the container should reach the vault on.
+- ``{vault_socket}`` — filesystem path of a Unix socket the container can
+  connect to for the vault.
+
+The concrete values are mode-dependent (socket vs TCP transport) and
+resolved centrally — agent YAMLs only need to reference the tokens.
 """
 
 from __future__ import annotations
@@ -15,6 +24,7 @@ import errno
 import logging
 import os
 import sys
+from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -28,12 +38,32 @@ class ConfigPatchError(RuntimeError):
     """Raised when a shared config patch fails and the task must not start."""
 
 
-def write_proxy_config(provider_name: str) -> None:
+@dataclass(frozen=True, slots=True)
+class VaultLocation:
+    """Container-side addresses of the vault in both transports.
+
+    One or both fields are set depending on the active transport:
+
+    - Socket mode: *socket* points at the mounted host socket; *url* points
+      at the in-container TCP→UNIX loopback bridge for HTTP-only clients.
+    - TCP mode: *url* points at ``host.containers.internal:<broker_port>``;
+      *socket* points at a local socat bridge that forwards to the same
+      broker over TCP (for clients that can only speak HTTP-over-UNIX).
+    """
+
+    url: str
+    """Base URL an in-container HTTP client should use (always non-empty)."""
+
+    socket: str
+    """Filesystem path for a Unix-socket-speaking HTTP client."""
+
+
+def write_vault_config(provider_name: str) -> None:
     """Apply ``shared_config_patch`` from the YAML roster after auth.
 
     Patches a TOML or YAML config file in the provider's shared config dir
-    to redirect API traffic through the vault.  The patch spec
-    is declared in the agent YAML — no provider-specific code needed.
+    to redirect API traffic through the vault.  The patch spec is declared
+    in the agent YAML — no provider-specific code needed.
     """
     from terok_executor.roster.loader import get_roster
 
@@ -46,13 +76,9 @@ def write_proxy_config(provider_name: str) -> None:
     if not auth_info:
         return
 
-    from terok_sandbox import SandboxConfig, get_token_broker_port
-
     from terok_executor.paths import mounts_dir
 
-    cfg = SandboxConfig()
-    port = get_token_broker_port(cfg)
-    proxy_url = f"http://host.containers.internal:{port}"
+    location = resolve_vault_location()
 
     patch = route.shared_config_patch
     shared_dir = mounts_dir() / auth_info.host_dir_name
@@ -60,9 +86,9 @@ def write_proxy_config(provider_name: str) -> None:
     config_path = _safe_config_path(shared_dir, patch["file"])
 
     if "yaml_set" in patch:
-        _apply_yaml_patch(config_path, patch, proxy_url)
+        _apply_yaml_patch(config_path, patch, location)
     elif "toml_table" in patch:
-        _apply_toml_patch(config_path, patch, proxy_url)
+        _apply_toml_patch(config_path, patch, location)
 
     print(f"Vault config written to {config_path}")
 
@@ -70,18 +96,14 @@ def write_proxy_config(provider_name: str) -> None:
 def apply_shared_config_patches(roster: AgentRoster, mounts_base: Path) -> None:
     """Re-apply every ``shared_config_patch`` for the whole roster.
 
-    Called during task start so that shared mount directories (which may
-    have been recreated empty) always contain the correct vault URLs.
+    Called during task start so shared mount directories (which may have
+    been recreated empty) always contain the correct vault addresses.
     Idempotent: safe to call on every launch.
 
     Raises :class:`ConfigPatchError` on failure — callers must not start
     the container if vault routing cannot be established.
     """
-    from terok_sandbox import SandboxConfig, get_token_broker_port
-
-    cfg = SandboxConfig()
-    port = get_token_broker_port(cfg)
-    proxy_url = f"http://host.containers.internal:{port}"
+    location = resolve_vault_location()
 
     for name, route in roster.vault_routes.items():
         if not route.shared_config_patch:
@@ -97,9 +119,9 @@ def apply_shared_config_patches(roster: AgentRoster, mounts_base: Path) -> None:
             config_path = _safe_config_path(shared_dir, patch["file"])
 
             if "yaml_set" in patch:
-                _apply_yaml_patch(config_path, patch, proxy_url)
+                _apply_yaml_patch(config_path, patch, location)
             elif "toml_table" in patch:
-                _apply_toml_patch(config_path, patch, proxy_url)
+                _apply_toml_patch(config_path, patch, location)
             _logger.debug("Applied config patch for %s → %s", name, config_path)
         except ConfigPatchError:
             raise
@@ -107,6 +129,37 @@ def apply_shared_config_patches(roster: AgentRoster, mounts_base: Path) -> None:
             raise ConfigPatchError(
                 f"Failed to apply vault config patch for {name} (file={patch.get('file')!r})"
             ) from exc
+
+
+def resolve_vault_location() -> VaultLocation:
+    """Resolve the container-side vault addresses for the active transport.
+
+    Reads the sandbox config once to decide whether we're in socket or TCP
+    mode.  Exposed as a public helper so the env builder can use the same
+    values it later writes to config files.
+    """
+    from terok_sandbox import SandboxConfig, get_token_broker_port
+
+    from terok_executor.vault_addr import (
+        CONTAINER_VAULT_SOCKET,
+        LOOPBACK_BRIDGE_SOCKET,
+        LOOPBACK_VAULT_PORT,
+    )
+
+    port = get_token_broker_port(SandboxConfig())
+    if port is None:
+        # Socket mode: container mounts the host vault socket directly; the
+        # loopback bridge serves clients that can only speak HTTP-over-TCP.
+        return VaultLocation(
+            url=f"http://localhost:{LOOPBACK_VAULT_PORT}",
+            socket=CONTAINER_VAULT_SOCKET,
+        )
+    # TCP mode: direct broker on the host; socat on the container side turns
+    # a local Unix socket into a TCP connection for socket-only clients.
+    return VaultLocation(
+        url=f"http://host.containers.internal:{port}",
+        socket=LOOPBACK_BRIDGE_SOCKET,
+    )
 
 
 # ── Private helpers ──────────────────────────────────────────────────────
@@ -183,7 +236,14 @@ def _write_nofollow(path: Path, data: bytes) -> None:
         os.close(fd)
 
 
-def _apply_toml_patch(config_path: Path, patch: dict, proxy_url: str) -> None:
+def _substitute(value: object, location: VaultLocation) -> object:
+    """Expand ``{vault_url}`` / ``{vault_socket}`` tokens in a patch value."""
+    if not isinstance(value, str):
+        return value
+    return value.replace("{vault_url}", location.url).replace("{vault_socket}", location.socket)
+
+
+def _apply_toml_patch(config_path: Path, patch: dict, location: VaultLocation) -> None:
     """Patch a TOML array-of-tables entry."""
     import tomllib
 
@@ -193,7 +253,7 @@ def _apply_toml_patch(config_path: Path, patch: dict, proxy_url: str) -> None:
             existing = tomllib.loads(raw.decode("utf-8"))
         except Exception as exc:
             print(
-                f"Warning [proxy-config]: failed to parse {config_path}: "
+                f"Warning [vault-config]: failed to parse {config_path}: "
                 f"{type(exc).__name__}: {exc}",
                 file=sys.stderr,
             )
@@ -203,10 +263,7 @@ def _apply_toml_patch(config_path: Path, patch: dict, proxy_url: str) -> None:
 
     table_key = patch["toml_table"]
     match_criteria = patch["toml_match"]
-    values = {
-        k: v.replace("{proxy_url}", proxy_url) if isinstance(v, str) else v
-        for k, v in patch["toml_set"].items()
-    }
+    values = {k: _substitute(v, location) for k, v in patch["toml_set"].items()}
 
     entries = existing.get(table_key, [])
     target = next(
@@ -224,7 +281,7 @@ def _apply_toml_patch(config_path: Path, patch: dict, proxy_url: str) -> None:
     _write_nofollow(config_path, tomli_w.dumps(existing).encode("utf-8"))
 
 
-def _apply_yaml_patch(config_path: Path, patch: dict, proxy_url: str) -> None:
+def _apply_yaml_patch(config_path: Path, patch: dict, location: VaultLocation) -> None:
     """Set top-level keys in a YAML config file."""
     import io
 
@@ -238,7 +295,7 @@ def _apply_yaml_patch(config_path: Path, patch: dict, proxy_url: str) -> None:
             existing = yaml.load(raw)
         except Exception as exc:
             print(
-                f"Warning [proxy-config]: failed to parse {config_path}: "
+                f"Warning [vault-config]: failed to parse {config_path}: "
                 f"{type(exc).__name__}: {exc}",
                 file=sys.stderr,
             )
@@ -249,7 +306,7 @@ def _apply_yaml_patch(config_path: Path, patch: dict, proxy_url: str) -> None:
         existing = {}
 
     for k, v in patch["yaml_set"].items():
-        existing[k] = v.replace("{proxy_url}", proxy_url) if isinstance(v, str) else v
+        existing[k] = _substitute(v, location)
 
     buf = io.BytesIO()
     yaml.dump(existing, buf)

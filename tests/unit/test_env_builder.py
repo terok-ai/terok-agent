@@ -495,30 +495,32 @@ class TestVaultTokenInjection:
         assert "ANTHROPIC_API_KEY" not in result.env
 
     def test_vault_socket_transport_injects_socket_env(self, workspace, envs_dir, roster, tmp_path):
-        """Socket transport injects socket_env and socket_path for routes that declare them."""
+        """Socket transport points socket_env at the mounted host vault socket."""
         cfg = _make_vault_db(tmp_path)
         spec = _spec(workspace, envs_dir, credential_scope="proj", vault_transport="socket")
         with (
             patch("terok_sandbox.is_vault_socket_active", return_value=True),
             patch("terok_sandbox.SandboxConfig", return_value=cfg),
+            patch("terok_sandbox.get_token_broker_port", return_value=None),
         ):
             result = assemble_container_env(spec, roster, caller_manages_vault=False)
 
-        # Claude route declares socket_env=ANTHROPIC_UNIX_SOCKET
-        assert "ANTHROPIC_UNIX_SOCKET" in result.env
-        assert result.env["ANTHROPIC_UNIX_SOCKET"] == "/tmp/terok-claude-proxy.sock"
+        assert result.env["ANTHROPIC_UNIX_SOCKET"] == "/run/terok/vault.sock"
 
-    def test_vault_direct_transport_omits_socket_env(self, workspace, envs_dir, roster, tmp_path):
-        """Direct transport (default) does not inject socket_env."""
+    def test_vault_direct_transport_points_socket_at_local_bridge(
+        self, workspace, envs_dir, roster, tmp_path
+    ):
+        """Direct (TCP) transport still sets socket_env — now to the local socat bridge."""
         cfg = _make_vault_db(tmp_path)
         spec = _spec(workspace, envs_dir, credential_scope="proj", vault_transport="direct")
         with (
             patch("terok_sandbox.is_vault_socket_active", return_value=True),
             patch("terok_sandbox.SandboxConfig", return_value=cfg),
+            patch("terok_sandbox.get_token_broker_port", return_value=18731),
         ):
             result = assemble_container_env(spec, roster, caller_manages_vault=False)
 
-        assert "ANTHROPIC_UNIX_SOCKET" not in result.env
+        assert result.env["ANTHROPIC_UNIX_SOCKET"] == "/tmp/terok-vault.sock"
 
     def test_vault_socket_transport_omits_tcp_broker_env_when_port_none(
         self, workspace, envs_dir, roster, tmp_path
@@ -527,10 +529,9 @@ class TestVaultTokenInjection:
 
         Under socket transport the broker listens only on the mounted Unix socket,
         and ``get_token_broker_port`` returns ``None``.  The assembled env must
-        omit every TCP-flavoured variable rather than interpolate the literal
-        string ``"None"`` — that string would otherwise leak through as
-        ``TEROK_TOKEN_BROKER_PORT="None"``, trip bridge scripts inside the
-        container, and silently break credential routing.
+        omit the TCP broker port variable rather than interpolate the literal
+        string ``"None"`` — that string would otherwise trip bridge scripts and
+        silently break credential routing.
         """
         cfg = _make_vault_db(tmp_path)
         spec = _spec(workspace, envs_dir, credential_scope="proj", vault_transport="socket")
@@ -542,11 +543,13 @@ class TestVaultTokenInjection:
             result = assemble_container_env(spec, roster, caller_manages_vault=False)
 
         assert "TEROK_TOKEN_BROKER_PORT" not in result.env
-        assert "GITLAB_API_HOST" not in result.env
-        # No env value should contain the stringified ``None`` port.
+        # GITLAB_API_HOST is now always set for glab — but never with "None".
         assert not any("None" in v for v in result.env.values())
-        # Socket transport is still honoured.
-        assert result.env.get("ANTHROPIC_UNIX_SOCKET") == "/tmp/terok-claude-proxy.sock"
+        # Socket transport uses the mounted host socket directly.
+        assert result.env.get("ANTHROPIC_UNIX_SOCKET") == "/run/terok/vault.sock"
+        # The in-container loopback port is advertised so ensure-bridges.sh
+        # stands up its TCP→UNIX bridge.
+        assert result.env.get("TEROK_VAULT_LOOPBACK_PORT") == "9419"
 
     def test_vault_required_raises_when_unreachable(self, workspace, envs_dir, roster):
         """vault_required=True raises SystemExit when vault is not running."""

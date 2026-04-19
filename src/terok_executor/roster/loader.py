@@ -107,13 +107,15 @@ class VaultRoute:
     """
 
     base_url_env: str = ""
-    """Env var to override with proxy URL (e.g. ``"ANTHROPIC_BASE_URL"``)."""
-
-    socket_path: str = ""
-    """Unix socket path for socat bridge (e.g. ``"/tmp/terok-claude-proxy.sock"``)."""
+    """Env var to override with the vault's HTTP URL (e.g. ``"ANTHROPIC_BASE_URL"``)."""
 
     socket_env: str = ""
-    """Env var that receives :attr:`socket_path` (e.g. ``"ANTHROPIC_UNIX_SOCKET"``)."""
+    """Env var that receives the container-side vault socket path.
+
+    Set when the agent speaks HTTP-over-UNIX natively (e.g. Claude reads
+    ``ANTHROPIC_UNIX_SOCKET``).  The resolved value is mode-dependent and
+    injected centrally by the env builder.
+    """
 
     shared_config_patch: dict | None = None
     """Optional shared config patch applied after auth (e.g. Vibe's config.toml)."""
@@ -840,11 +842,10 @@ def _to_vault_route(name: str, data: dict) -> VaultRoute | None:
         if required not in cp:
             raise ValueError(f"Agent {name!r}: vault missing required key {required!r}")
     oauth_phantom_env = cp.get("oauth_phantom_env") or {}
-    socket_path = cp.get("socket_path") or ""
-    socket_env = cp.get("socket_env") or ""
-    if bool(socket_path) != bool(socket_env):
+    if "socket_path" in cp:
         raise ValueError(
-            f"Agent {name!r}: vault requires both 'socket_path' and 'socket_env' together"
+            f"Agent {name!r}: 'socket_path' is no longer configurable — "
+            "remove it; the env builder resolves the vault socket path centrally"
         )
     return VaultRoute(
         provider=name,
@@ -857,8 +858,7 @@ def _to_vault_route(name: str, data: dict) -> VaultRoute | None:
         phantom_env=cp.get("phantom_env", {}),
         oauth_phantom_env=oauth_phantom_env,
         base_url_env=cp.get("base_url_env", ""),
-        socket_path=socket_path,
-        socket_env=socket_env,
+        socket_env=cp.get("socket_env") or "",
         shared_config_patch=cp.get("shared_config_patch"),
         oauth_refresh=_validated_oauth_refresh(name, cp.get("oauth_refresh")),
     )

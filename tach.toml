@@ -37,6 +37,12 @@ depends_on = []
 path = "terok_executor.resources"
 depends_on = []
 
+# Container-side vault addressing constants — shared by env builder,
+# config patcher, and doctor.  Depends only on terok_sandbox (external).
+[[modules]]
+path = "terok_executor.vault_addr"
+depends_on = []
+
 # ── roster/ — agent catalog ─────────────────────────────────────────
 
 # YAML agent roster — loads bundled + user agent definitions
@@ -119,6 +125,7 @@ depends_on = [
     "terok_executor.credentials.vault_commands",
     "terok_executor.credentials.vault_config",
     "terok_executor.paths",
+    "terok_executor.vault_addr",
 ]
 
 # Agent runner facade — composes sandbox + agent config + container launch
@@ -151,12 +158,13 @@ depends_on = [
     "terok_executor.paths",
 ]
 
-# Post-auth shared config patching (proxy URL writes)
+# Post-auth shared config patching (vault URL writes)
 [[modules]]
 path = "terok_executor.credentials.vault_config"
 depends_on = [
     "terok_executor.paths",
     "terok_executor.roster.loader",
+    "terok_executor.vault_addr",
 ]
 
 # Credential proxy CLI commands — wraps sandbox lifecycle + route generation
@@ -206,7 +214,9 @@ depends_on = [
 # Agent-level container health checks
 [[modules]]
 path = "terok_executor.doctor"
-depends_on = []
+depends_on = [
+    "terok_executor.vault_addr",
+]
 
 # Package root — public API re-exports + roster bootstrap
 [[modules]]

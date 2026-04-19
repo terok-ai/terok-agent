@@ -207,9 +207,9 @@ def _handle_auth(*, agent: str, api_key: str | None = None) -> None:
         authenticate("standalone", agent, mounts_dir=mounts_dir(), image=image)
 
     # Write vault URLs to shared config files (e.g. Vibe config.toml, gh config.yml)
-    from .credentials.vault_config import write_proxy_config
+    from .credentials.vault_config import write_vault_config
 
-    write_proxy_config(agent)
+    write_vault_config(agent)
 
 
 def _handle_agents(*, show_all: bool = False) -> None:

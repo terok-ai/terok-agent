@@ -243,8 +243,8 @@ def assemble_container_env(
     mounts_base = spec.envs_dir or _mounts_dir()
     volumes += _shared_config_mounts(roster, mounts_base)
 
-    # 8b. Re-apply proxy config patches (idempotent — ensures shared mount
-    #     dirs contain correct proxy URLs even after state wipe).
+    # 8b. Re-apply vault config patches (idempotent — ensures shared mount
+    #     dirs contain correct vault addresses even after state wipe).
     #
     #     NOT gated by caller_manages_vault: that flag only skips
     #     phantom-token injection here because the caller (terok) injects
@@ -359,8 +359,8 @@ def _inject_vault_tokens(
 
     - **Auth**: selects ``phantom_env`` vs ``oauth_phantom_env`` based on the
       stored credential type (Phase 1).
-    - **Transport**: injects ``socket_env``/``socket_path`` when
-      *vault_transport* is ``"socket"`` (Phase 2).
+    - **Transport**: resolves the shared vault address and writes it into
+      every route's ``socket_env`` / ``base_url_env`` (Phase 2).
     - **SSH signer**: creates a phantom token for the SSH signer when the
       scope has registered SSH keys (Phase 3).
 
@@ -436,12 +436,16 @@ def _inject_vault_tokens(
         db.close()
 
     use_socket = vault_transport == "socket"
-    # The broker's TCP address — absent under socket transport, where the
-    # broker listens only on the mounted Unix socket and ``port`` is ``None``.
-    # Container-side consumers that need an HTTP endpoint get nothing rather
-    # than the string ``"None"``.
-    tcp_broker = f"host.containers.internal:{port}" if port else None
-    proxy_base = f"http://{tcp_broker}" if tcp_broker else None
+    # Resolve the single container-side vault address used by every
+    # socket/URL injection below.  Socket mode points at the mounted host
+    # socket + a loopback HTTP bridge; TCP mode points at the broker's TCP
+    # endpoint + a socat-fronted Unix socket.  Agents don't decide per-route
+    # any more — addressing is centralised.
+    from terok_executor.credentials.vault_config import resolve_vault_location
+    from terok_executor.vault_addr import LOOPBACK_VAULT_PORT, VAULT_LOOPBACK_PORT_ENV
+
+    location = resolve_vault_location()
+    host_tcp = f"host.containers.internal:{port}" if port else None
     env: dict[str, str] = {}
 
     for name, route in vault_routes.items():
@@ -455,22 +459,26 @@ def _inject_vault_tokens(
         for env_var in token_vars:
             env[env_var] = tokens[name]
 
-        if use_socket and route.socket_path and route.socket_env:
-            env[route.socket_env] = route.socket_path
-        if route.base_url_env and proxy_base:
-            env[route.base_url_env] = proxy_base
+        if route.socket_env:
+            env[route.socket_env] = location.socket
+        if route.base_url_env:
+            env[route.base_url_env] = location.url
 
-        # OpenCode base URL override for proxied providers
+        # OpenCode base URL override for proxied providers.
         provider = roster.providers.get(name)
-        if provider and provider.opencode_config and proxy_base:
-            env[f"TEROK_OC_{name.upper()}_BASE_URL"] = f"{proxy_base}/v1"
-        # glab: redirect API to proxy
-        if name == "glab" and tcp_broker:
-            env["GITLAB_API_HOST"] = tcp_broker
+        if provider and provider.opencode_config:
+            env[f"TEROK_OC_{name.upper()}_BASE_URL"] = f"{location.url}/v1"
+        # glab uses its own host+protocol split; in socket mode it rides the
+        # same in-container loopback bridge as every other HTTP-only client.
+        if name == "glab":
             env["API_PROTOCOL"] = "http"
+            env["GITLAB_API_HOST"] = host_tcp if host_tcp else f"localhost:{LOOPBACK_VAULT_PORT}"
 
-    if routed and port:
-        env["TEROK_TOKEN_BROKER_PORT"] = str(port)
+    if routed:
+        if port:
+            env["TEROK_TOKEN_BROKER_PORT"] = str(port)
+        if use_socket:
+            env[VAULT_LOOPBACK_PORT_ENV] = str(LOOPBACK_VAULT_PORT)
 
     if ssh_token:
         env["TEROK_SSH_SIGNER_TOKEN"] = ssh_token

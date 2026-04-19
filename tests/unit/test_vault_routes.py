@@ -28,7 +28,6 @@ class TestVaultRoutesParsed:
         assert "ANTHROPIC_API_KEY" in route.phantom_env
         assert "CLAUDE_CODE_OAUTH_TOKEN" in route.oauth_phantom_env
         assert route.base_url_env == "ANTHROPIC_BASE_URL"
-        assert route.socket_path == "/tmp/terok-claude-proxy.sock"
         assert route.socket_env == "ANTHROPIC_UNIX_SOCKET"
 
     def test_codex_route_exists(self) -> None:
@@ -59,18 +58,16 @@ class TestVaultRoutesParsed:
             route = get_roster().vault_routes.get(name)
             assert route is not None, f"{name} missing vault route"
             assert route.oauth_phantom_env == {}, f"{name} should have no oauth_phantom_env"
-            assert route.socket_path == "", f"{name} should have no socket_path"
             assert route.socket_env == "", f"{name} should have no socket_env"
 
-    def test_partial_socket_config_rejected(self) -> None:
-        """Setting only socket_path or only socket_env raises ValueError."""
+    def test_rejects_legacy_socket_path_field(self) -> None:
+        """socket_path was removed — declaring it must fail loudly so stale
+        agent manifests don't silently drift out of sync."""
         from terok_executor.roster.loader import _to_vault_route
 
         base = {"route_prefix": "test", "upstream": "https://example.com"}
-        with pytest.raises(ValueError, match="both.*together"):
+        with pytest.raises(ValueError, match="socket_path.*no longer"):
             _to_vault_route("test", {"vault": {**base, "socket_path": "/tmp/s.sock"}})
-        with pytest.raises(ValueError, match="both.*together"):
-            _to_vault_route("test", {"vault": {**base, "socket_env": "MY_SOCK"}})
 
     def test_opencode_agents_have_routes(self) -> None:
         """Blablador and KISSKI have vault routes."""
@@ -565,8 +562,8 @@ class TestFormatCredentials:
 class TestToVaultRoute:
     """Verify _to_vault_route() parsing edge cases."""
 
-    def test_both_socket_fields_accepted(self) -> None:
-        """Both socket_path and socket_env together are valid."""
+    def test_socket_env_alone_accepted(self) -> None:
+        """socket_env (without socket_path) is the new valid form."""
         from terok_executor.roster.loader import _to_vault_route
 
         route = _to_vault_route(
@@ -575,17 +572,15 @@ class TestToVaultRoute:
                 "vault": {
                     "route_prefix": "test",
                     "upstream": "https://example.com",
-                    "socket_path": "/tmp/test.sock",
                     "socket_env": "TEST_SOCKET",
                 }
             },
         )
         assert route is not None
-        assert route.socket_path == "/tmp/test.sock"
         assert route.socket_env == "TEST_SOCKET"
 
     def test_neither_socket_field_accepted(self) -> None:
-        """Omitting both socket fields is valid (no socket transport)."""
+        """Omitting socket_env is valid (agent has no socket transport)."""
         from terok_executor.roster.loader import _to_vault_route
 
         route = _to_vault_route(
@@ -598,7 +593,6 @@ class TestToVaultRoute:
             },
         )
         assert route is not None
-        assert route.socket_path == ""
         assert route.socket_env == ""
 
     def test_oauth_phantom_env_parsed(self) -> None:

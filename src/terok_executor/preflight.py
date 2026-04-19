@@ -150,10 +150,10 @@ def _fix_credentials(provider: str) -> bool:
     except SystemExit:
         return False
 
-    # Write proxy config patches for the authenticated provider
-    from terok_executor.credentials.vault_config import write_proxy_config
+    # Write vault config patches for the authenticated provider
+    from terok_executor.credentials.vault_config import write_vault_config
 
-    write_proxy_config(provider)
+    write_vault_config(provider)
     return True
 
 

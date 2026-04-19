@@ -54,7 +54,6 @@ vault:
   oauth_phantom_env:
     CLAUDE_CODE_OAUTH_TOKEN: true
   base_url_env: ANTHROPIC_BASE_URL
-  socket_path: /tmp/terok-claude-proxy.sock
   socket_env: ANTHROPIC_UNIX_SOCKET
 
 auth:

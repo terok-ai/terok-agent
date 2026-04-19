@@ -31,15 +31,17 @@ class TestApplyTomlPatchWarning:
             "file": "config.toml",
             "toml_table": "servers",
             "toml_match": {"name": "proxy"},
-            "toml_set": {"api_base": "{proxy_url}/v1"},
+            "toml_set": {"api_base": "{vault_url}/v1"},
         }
 
-        from terok_executor.credentials.vault_config import _apply_toml_patch
+        from terok_executor.credentials.vault_config import VaultLocation, _apply_toml_patch
 
-        _apply_toml_patch(config_path, patch_spec, "http://localhost:9999")
+        _apply_toml_patch(
+            config_path, patch_spec, VaultLocation(url="http://localhost:9999", socket="")
+        )
 
         captured = capsys.readouterr()
-        assert "Warning [proxy-config]" in captured.err
+        assert "Warning [vault-config]" in captured.err
         assert str(config_path) in captured.err
 
         # The file should still be written with the new entry (fallback to empty dict)
@@ -59,12 +61,14 @@ class TestApplyTomlPatchWarning:
             "file": "nonexistent.toml",
             "toml_table": "servers",
             "toml_match": {"name": "proxy"},
-            "toml_set": {"api_base": "{proxy_url}/v1"},
+            "toml_set": {"api_base": "{vault_url}/v1"},
         }
 
-        from terok_executor.credentials.vault_config import _apply_toml_patch
+        from terok_executor.credentials.vault_config import VaultLocation, _apply_toml_patch
 
-        _apply_toml_patch(config_path, patch_spec, "http://localhost:9999")
+        _apply_toml_patch(
+            config_path, patch_spec, VaultLocation(url="http://localhost:9999", socket="")
+        )
 
         captured = capsys.readouterr()
         assert "Warning" not in captured.err
@@ -78,12 +82,14 @@ class TestApplyTomlPatchWarning:
             "file": "config.toml",
             "toml_table": "servers",
             "toml_match": {"name": "proxy"},
-            "toml_set": {"api_base": "{proxy_url}/v1"},
+            "toml_set": {"api_base": "{vault_url}/v1"},
         }
 
-        from terok_executor.credentials.vault_config import _apply_toml_patch
+        from terok_executor.credentials.vault_config import VaultLocation, _apply_toml_patch
 
-        _apply_toml_patch(config_path, patch_spec, "http://localhost:9999")
+        _apply_toml_patch(
+            config_path, patch_spec, VaultLocation(url="http://localhost:9999", socket="")
+        )
 
         captured = capsys.readouterr()
         assert "Warning" not in captured.err
@@ -104,15 +110,17 @@ class TestApplyYamlPatchWarning:
 
         patch_spec = {
             "file": "config.yaml",
-            "yaml_set": {"api_base": "{proxy_url}/v1"},
+            "yaml_set": {"api_base": "{vault_url}/v1"},
         }
 
-        from terok_executor.credentials.vault_config import _apply_yaml_patch
+        from terok_executor.credentials.vault_config import VaultLocation, _apply_yaml_patch
 
-        _apply_yaml_patch(config_path, patch_spec, "http://localhost:9999")
+        _apply_yaml_patch(
+            config_path, patch_spec, VaultLocation(url="http://localhost:9999", socket="")
+        )
 
         captured = capsys.readouterr()
-        assert "Warning [proxy-config]" in captured.err
+        assert "Warning [vault-config]" in captured.err
         assert str(config_path) in captured.err
 
         # The file should be written with only the new key (fallback to empty)
@@ -129,12 +137,14 @@ class TestApplyYamlPatchWarning:
         config_path = tmp_path / "nonexistent.yaml"
         patch_spec = {
             "file": "nonexistent.yaml",
-            "yaml_set": {"api_base": "{proxy_url}/v1"},
+            "yaml_set": {"api_base": "{vault_url}/v1"},
         }
 
-        from terok_executor.credentials.vault_config import _apply_yaml_patch
+        from terok_executor.credentials.vault_config import VaultLocation, _apply_yaml_patch
 
-        _apply_yaml_patch(config_path, patch_spec, "http://localhost:9999")
+        _apply_yaml_patch(
+            config_path, patch_spec, VaultLocation(url="http://localhost:9999", socket="")
+        )
 
         captured = capsys.readouterr()
         assert "Warning" not in captured.err
@@ -146,12 +156,14 @@ class TestApplyYamlPatchWarning:
 
         patch_spec = {
             "file": "config.yaml",
-            "yaml_set": {"api_base": "{proxy_url}/v1"},
+            "yaml_set": {"api_base": "{vault_url}/v1"},
         }
 
-        from terok_executor.credentials.vault_config import _apply_yaml_patch
+        from terok_executor.credentials.vault_config import VaultLocation, _apply_yaml_patch
 
-        _apply_yaml_patch(config_path, patch_spec, "http://localhost:9999")
+        _apply_yaml_patch(
+            config_path, patch_spec, VaultLocation(url="http://localhost:9999", socket="")
+        )
 
         captured = capsys.readouterr()
         assert "Warning" not in captured.err
