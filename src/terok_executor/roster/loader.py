@@ -509,7 +509,13 @@ def load_roster() -> AgentRoster:
         if help_spec is not None:
             helps[name] = help_spec
 
-        if bool(data.get("web_ingress", False)):
+        raw_web_ingress = data.get("web_ingress", False)
+        if not isinstance(raw_web_ingress, bool):
+            raise ValueError(
+                f"Agent {name!r}: web_ingress must be a boolean, got "
+                f"{type(raw_web_ingress).__name__}"
+            )
+        if raw_web_ingress:
             web_ingress_names.add(name)
 
     return AgentRoster(

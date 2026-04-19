@@ -17,7 +17,11 @@ if [[ ! -r "$TOKEN_FILE" ]]; then
     echo "terok-toad-entry: token file $TOKEN_FILE is missing or unreadable" >&2
     exit 1
 fi
-TOAD_TOKEN="$(<"$TOKEN_FILE")"
+TOAD_TOKEN="$(tr -d '\r\n' <"$TOKEN_FILE")"
+if [[ -z "$TOAD_TOKEN" ]]; then
+    echo "terok-toad-entry: token file $TOKEN_FILE is empty" >&2
+    exit 1
+fi
 TOAD_UPSTREAM="127.0.0.1:${INTERNAL_PORT}"
 export TOAD_TOKEN TOAD_UPSTREAM
 
@@ -53,8 +57,14 @@ fi
 
 echo "TEROK_READY"
 
-# Forward toad's exit code; stop caddy alongside it.
-wait "$TOAD_PID"
-EXIT=$?
+# Forward toad's exit code; stop caddy alongside it.  ``wait`` inside an
+# ``if`` avoids tripping ``set -e`` when toad exits non-zero, so the cleanup
+# below always runs and the exit status propagates correctly.
+if wait "$TOAD_PID"; then
+    EXIT=0
+else
+    EXIT=$?
+fi
 kill "$CADDY_PID" 2>/dev/null || true
+wait "$CADDY_PID" 2>/dev/null || true
 exit "$EXIT"

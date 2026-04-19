@@ -10,8 +10,11 @@
 }
 
 :8080 {
-	@authed header_regexp Cookie `(?:^|;\s*)terok_token={$TOAD_TOKEN}(?:;|$)`
-	@seed query token={$TOAD_TOKEN}
+	# Literal equality via CEL expressions — avoids any regex-metacharacter
+	# risk from interpolated tokens.  Caddy resolves {$TOAD_TOKEN} at config
+	# load time, well before any request hits these matchers.
+	@authed expression `{http.request.cookie.terok_token} == "{$TOAD_TOKEN}"`
+	@seed expression `{http.request.uri.query.token} == "{$TOAD_TOKEN}"`
 
 	handle @authed {
 		reverse_proxy {$TOAD_UPSTREAM}
