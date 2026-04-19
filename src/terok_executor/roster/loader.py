@@ -196,6 +196,7 @@ class AgentRoster:
     _mounts: tuple[MountDef, ...] = ()
     _agent_names: tuple[str, ...] = ()
     _all_names: tuple[str, ...] = ()
+    _web_ingress: frozenset[str] = frozenset()
 
     # ── Properties ──
 
@@ -238,6 +239,16 @@ class AgentRoster:
     def helps(self) -> dict[str, HelpSpec]:
         """All help blurbs, keyed by roster name (entries without one are absent)."""
         return dict(self._helps)
+
+    @property
+    def web_ingress(self) -> frozenset[str]:
+        """Names of entries that publish a host HTTP port (``web_ingress: true``).
+
+        Consumers (e.g. terok's task launcher) use this to decide whether
+        to allocate a published port and drop a per-task auth token into
+        the container-visible config dir.
+        """
+        return self._web_ingress
 
     # ── Selection ──
 
@@ -432,6 +443,7 @@ def load_roster() -> AgentRoster:
     helps: dict[str, HelpSpec] = {}
     agent_names: list[str] = []
     all_names: list[str] = []
+    web_ingress_names: set[str] = set()
 
     # Collect mounts from all entries — deduplicate by host_dir
     seen_mounts: dict[str, MountDef] = {}
@@ -497,6 +509,15 @@ def load_roster() -> AgentRoster:
         if help_spec is not None:
             helps[name] = help_spec
 
+        raw_web_ingress = data.get("web_ingress", False)
+        if not isinstance(raw_web_ingress, bool):
+            raise ValueError(
+                f"Agent {name!r}: web_ingress must be a boolean, got "
+                f"{type(raw_web_ingress).__name__}"
+            )
+        if raw_web_ingress:
+            web_ingress_names.add(name)
+
     return AgentRoster(
         _providers=providers,
         _auth_providers=auth_providers,
@@ -507,6 +528,7 @@ def load_roster() -> AgentRoster:
         _mounts=tuple(seen_mounts.values()),
         _agent_names=tuple(agent_names),
         _all_names=tuple(all_names),
+        _web_ingress=frozenset(web_ingress_names),
     )
 
 

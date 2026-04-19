@@ -1,0 +1,29 @@
+# SPDX-FileCopyrightText: 2026 Jiri Vyskocil
+# SPDX-License-Identifier: Apache-2.0
+
+# Caddy reverse proxy — runtime ingress that gates web-UI roster entries
+# (toad today, Vibes and others in future) with a per-container token.
+# Not an agent or tool: pulled in via ``install.depends_on: [caddy]``.
+roster_version: 1
+
+kind: runtime
+label: Caddy
+
+install:
+  # Debian 12+ and Fedora 40+ both ship ``caddy`` in their default repos;
+  # no third-party apt source is needed.  The Caddyfile is staged to
+  # /etc/caddy and the token env var ({$TOAD_TOKEN}) is resolved at
+  # ``caddy run`` time by the per-UI supervisor script.
+  run_as_root: |
+    {% if family == "deb" %}
+    RUN set -eux; \
+        apt-get update; \
+        apt-get install -y --no-install-recommends caddy; \
+        rm -rf /var/lib/apt/lists/*
+    {% else %}
+    RUN set -eux; \
+        dnf install -y caddy; \
+        dnf clean all
+    {% endif %}
+    RUN set -eux; \
+        install -m 0644 /tmp/terok-scripts/Caddyfile /etc/caddy/Caddyfile
