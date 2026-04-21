@@ -2713,7 +2713,7 @@ terok-shield = {git = "https://github.com/sliwowitz/terok-shield.git", branch = 
 type = "git"
 url = "https://github.com/sliwowitz/terok-sandbox.git"
 reference = "feat/dbus-clearance-bridge"
-resolved_reference = "5e41a1da0cb7e97baa3328bcc050af489b4b25be"
+resolved_reference = "140fbecd77ec1e7a198b2155f4f8dbdd6c93e7a9"
 
 [[package]]
 name = "terok-shield"
