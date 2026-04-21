@@ -24,7 +24,8 @@ packages = [
 
 [tool.poetry.dependencies]
 python = ">=3.12,<4.0"
-terok-sandbox = {url = "https://github.com/terok-ai/terok-sandbox/releases/download/v0.0.80/terok_sandbox-0.0.80-py3-none-any.whl"}
+# DEV-TIME BRANCH PIN — flipped back to release-URL by the release script.
+terok-sandbox = {git = "https://github.com/sliwowitz/terok-sandbox.git", branch = "feat/clearance-bridge"}
 "ruamel.yaml" = ">=0.18"
 Jinja2 = ">=3.1"
 tomli-w = ">=1.0"
