@@ -24,10 +24,11 @@ packages = [
 
 [tool.poetry.dependencies]
 python = ">=3.12,<4.0"
-# DEV-TIME BRANCH PIN — bridges the PodmanInspector chain so terok can
-# `pipx install` from a local branch; release script flips this back to
-# the sandbox v0.0.87 wheel URL pre-merge.
-terok-sandbox = {url = "https://github.com/terok-ai/terok-sandbox/releases/download/v0.0.88/terok_sandbox-0.0.88-py3-none-any.whl"}
+# DEV-TIME BRANCH PIN — tracks sandbox's feat/optional-gate-and-upstream
+# branch (terok-ai/terok-sandbox#196) which itself rebases onto master so
+# the PodmanInspector additions from #195 flow through transitively.  The
+# release script flips this back to a release-URL pin before cutting.
+terok-sandbox = {git = "https://github.com/sliwowitz/terok-sandbox.git", branch = "feat/optional-gate-and-upstream"}
 "ruamel.yaml" = ">=0.18"
 Jinja2 = ">=3.1"
 tomli-w = ">=1.0"
