@@ -3,15 +3,10 @@
 
 """First-run readiness gate for ``terok-executor run``.
 
-A check passes when the runtime prerequisite it names is met; when
-interactive I/O is available and the check fails, the handler offers to
-remediate on the spot.  Mandatory checks (podman, sandbox services,
-container images) block the launch if still unmet after the offer;
-optional checks (SSH key, per-agent credentials) print the consequence
+Mandatory prerequisites (podman, sandbox services, container images)
+block the launch if unmet after interactive remediation; optional
+prerequisites (SSH key, per-agent credentials) print the consequence
 of skipping and let the launch proceed.
-
-:func:`run_preflight` is the entry point.  :mod:`.commands` calls it
-from ``run`` and ``run-tool`` before any :class:`AgentRunner` appears.
 """
 
 from __future__ import annotations
@@ -31,7 +26,133 @@ class CheckResult:
     message: str
 
 
-# ── Mandatory checks ───────────────────────────────────────────────────
+# ── Orchestrator ───────────────────────────────────────────────────────
+
+
+def run_preflight(
+    provider: str,
+    *,
+    interactive: bool = True,
+    assume_yes: bool = False,
+    base_image: str = "ubuntu:24.04",
+    family: str | None = None,
+) -> bool:
+    """Run every prerequisite check and return ``True`` iff mandatory items pass.
+
+    In non-interactive mode, missing mandatory prerequisites are
+    reported once and the return is ``False``; in interactive mode
+    each one is offered up as a y/N fix before counting against
+    readiness.  Optional items never turn the return into ``False`` —
+    their consequence is printed and the launch proceeds.
+    """
+    print()
+    all_ready = True
+
+    if not _require_podman():
+        return False
+
+    if not _require_sandbox_services(interactive=interactive, assume_yes=assume_yes):
+        all_ready = False
+
+    if not _require_images(base_image, family, interactive=interactive, assume_yes=assume_yes):
+        all_ready = False
+
+    _offer_ssh_key(interactive=interactive, assume_yes=assume_yes)
+    _offer_credentials(provider, interactive=interactive, assume_yes=assume_yes)
+    _note_shield_bypass()
+
+    if all_ready and interactive:
+        _provider_hints(provider)
+
+    print()
+    return all_ready
+
+
+# ── Mandatory gates ────────────────────────────────────────────────────
+
+
+def _require_podman() -> bool:
+    """Hard-stop when podman is missing — nothing terok can install it with."""
+    r = check_podman()
+    _print_step(r)
+    if not r.ok:
+        print("      Install podman first: https://podman.io/docs/installation", file=sys.stderr)
+        return False
+    return True
+
+
+def _require_sandbox_services(*, interactive: bool, assume_yes: bool) -> bool:
+    """Install shield+vault+gate if needed; report remaining gap if not."""
+    r = check_sandbox_services()
+    if not r.ok and interactive:
+        print(f"  {r.name}... {r.message}")
+        if _confirm("Install shield + vault + gate now?", assume_yes=assume_yes) and (
+            _fix_sandbox_services()
+        ):
+            r = check_sandbox_services()
+    _print_step(r)
+    if not r.ok:
+        print("      Run: terok-executor setup", file=sys.stderr)
+    return r.ok
+
+
+def _require_images(
+    base_image: str, family: str | None, *, interactive: bool, assume_yes: bool
+) -> bool:
+    """Build L0+L1 images if missing — mandatory, first-run-heavy."""
+    r = check_images(base_image)
+    if not r.ok and interactive:
+        print(f"  {r.name}... {r.message}")
+        if _confirm("Build container images now?", assume_yes=assume_yes) and (
+            _fix_images(base_image, family=family)
+        ):
+            r = check_images(base_image)
+    _print_step(r)
+    if not r.ok:
+        print("      Run: terok-executor build", file=sys.stderr)
+    return r.ok
+
+
+# ── Optional offers ────────────────────────────────────────────────────
+
+
+def _offer_ssh_key(*, interactive: bool, assume_yes: bool) -> None:
+    """Generate a gate-signing SSH key when missing; gate push is the consequence."""
+    r = check_ssh_key()
+    if not r.ok and interactive:
+        print(f"  {r.name}... {r.message}")
+        if _confirm("Generate an SSH key for gate signing?", assume_yes=assume_yes) and (
+            _fix_ssh_key()
+        ):
+            r = check_ssh_key()
+    _print_step(r)
+    if not r.ok:
+        print("      Without a gate SSH key, git push via the gate won't work.")
+
+
+def _offer_credentials(provider: str, *, interactive: bool, assume_yes: bool) -> None:
+    """Authenticate *provider* when missing; login-on-first-turn is the consequence."""
+    r = check_credentials(provider)
+    if not r.ok and interactive:
+        print(f"  {r.name}... {r.message}")
+        if _confirm(f"Authenticate {provider} now?", assume_yes=assume_yes) and (
+            _fix_credentials(provider)
+        ):
+            r = check_credentials(provider)
+    _print_step(r)
+    if not r.ok:
+        print(f"      Without credentials, {provider} will prompt for login on first turn.")
+
+
+def _note_shield_bypass() -> None:
+    """Surface the bypass override when set — regular shield state is in sandbox-services."""
+    from terok_sandbox import check_environment
+
+    if check_environment().health == "bypass":
+        print("\n  Note: shield is in bypass mode — containers have unrestricted network")
+
+
+# ── Prerequisite probes ────────────────────────────────────────────────
 
 
 def check_podman() -> CheckResult:
@@ -98,16 +219,12 @@ def check_images(base_image: str) -> CheckResult:
     return CheckResult("container images", False, "not built")
 
 
-# ── Optional checks ────────────────────────────────────────────────────
-
-
 def check_credentials(provider: str) -> CheckResult:
     """Check whether credentials are stored for *provider*."""
     from terok_sandbox import CredentialDB, SandboxConfig
 
-    cfg = SandboxConfig()
     try:
-        db = CredentialDB(cfg.db_path)
+        db = CredentialDB(SandboxConfig().db_path)
     except Exception:  # noqa: BLE001
         return CheckResult(f"{provider} credentials", False, "credential database unavailable")
     try:
@@ -137,7 +254,7 @@ def check_ssh_key(scope: str = "standalone") -> CheckResult:
 
 
 def check_shield() -> CheckResult:
-    """Check whether shield OCI hooks are installed (informational only)."""
+    """Check whether shield OCI hooks are installed (informational)."""
     from terok_sandbox import check_environment
 
     ec = check_environment()
@@ -218,125 +335,6 @@ def _fix_credentials(provider: str) -> bool:
 
     write_vault_config(provider)
     return True
-
-
-# ── Orchestrator ───────────────────────────────────────────────────────
-
-
-def run_preflight(
-    provider: str,
-    *,
-    interactive: bool = True,
-    assume_yes: bool = False,
-    base_image: str = "ubuntu:24.04",
-    family: str | None = None,
-) -> bool:
-    """Run every prerequisite check and return ``True`` iff mandatory items pass.
-
-    In non-interactive mode, missing mandatory prerequisites are reported
-    once and the function returns ``False``; in interactive mode each one
-    is offered up as a y/N fix before counting against readiness.
-    Optional items (SSH key, credentials) never turn the return into
-    ``False`` — their consequence is printed and the launch proceeds.
-    """
-    print()
-    all_ready = True
-
-    if not _require_podman():
-        return False
-
-    if not _require_sandbox_services(interactive=interactive, assume_yes=assume_yes):
-        all_ready = False
-
-    if not _require_images(base_image, family, interactive=interactive, assume_yes=assume_yes):
-        all_ready = False
-
-    _offer_ssh_key(interactive=interactive, assume_yes=assume_yes)
-    _offer_credentials(provider, interactive=interactive, assume_yes=assume_yes)
-    _note_shield()
-
-    if all_ready and interactive:
-        _provider_hints(provider)
-
-    print()
-    return all_ready
-
-
-# ── Orchestrator helpers (one per mandatory / optional check) ──────────
-
-
-def _require_podman() -> bool:
-    """Hard-stop when podman is missing — nothing we do can install it."""
-    r = check_podman()
-    _print_step(r)
-    if not r.ok:
-        print("      Install podman first: https://podman.io/docs/installation", file=sys.stderr)
-        return False
-    return True
-
-
-def _require_sandbox_services(*, interactive: bool, assume_yes: bool) -> bool:
-    """Install shield+vault+gate if needed; report remaining gap if not."""
-    r = check_sandbox_services()
-    if not r.ok and interactive:
-        print(f"  {r.name}... {r.message}")
-        if _confirm("Install shield + vault + gate now?", assume_yes=assume_yes):
-            if _fix_sandbox_services():
-                r = check_sandbox_services()
-    _print_step(r)
-    if not r.ok:
-        print("      Run: terok-executor setup", file=sys.stderr)
-    return r.ok
-
-
-def _require_images(
-    base_image: str, family: str | None, *, interactive: bool, assume_yes: bool
-) -> bool:
-    """Build L0+L1 images if missing — mandatory, first-run-heavy."""
-    r = check_images(base_image)
-    if not r.ok and interactive:
-        print(f"  {r.name}... {r.message}")
-        if _confirm("Build container images now?", assume_yes=assume_yes):
-            if _fix_images(base_image, family=family):
-                r = check_images(base_image)
-    _print_step(r)
-    if not r.ok:
-        print("      Run: terok-executor build", file=sys.stderr)
-    return r.ok
-
-
-def _offer_ssh_key(*, interactive: bool, assume_yes: bool) -> None:
-    """Generate a gate-signing SSH key when missing — optional, noisy on skip."""
-    r = check_ssh_key()
-    if not r.ok and interactive:
-        print(f"  {r.name}... {r.message}")
-        if _confirm("Generate an SSH key for gate signing?", assume_yes=assume_yes):
-            if _fix_ssh_key():
-                r = check_ssh_key()
-    _print_step(r)
-    if not r.ok:
-        print("      Without a gate SSH key, git push via the gate won't work.")
-
-
-def _offer_credentials(provider: str, *, interactive: bool, assume_yes: bool) -> None:
-    """Authenticate *provider* when missing — optional, noisy on skip."""
-    r = check_credentials(provider)
-    if not r.ok and interactive:
-        print(f"  {r.name}... {r.message}")
-        if _confirm(f"Authenticate {provider} now?", assume_yes=assume_yes):
-            if _fix_credentials(provider):
-                r = check_credentials(provider)
-    _print_step(r)
-    if not r.ok:
-        print(f"      Without credentials, {provider} will prompt for login on first turn.")
-
-
-def _note_shield() -> None:
-    """Surface the bypass override when set — regular shield state already in sandbox-services."""
-    from terok_sandbox import check_environment
-
-    if check_environment().health == "bypass":
-        print("\n  Note: shield is in bypass mode — containers have unrestricted network")
 
 
 # ── Printing ───────────────────────────────────────────────────────────

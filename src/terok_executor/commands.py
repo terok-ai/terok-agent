@@ -1,11 +1,11 @@
 # SPDX-FileCopyrightText: 2026 Jiri Vyskocil
 # SPDX-License-Identifier: Apache-2.0
 
-"""Registers the subcommands that terok-executor exposes to users.
+"""Catalog of every ``terok-executor`` subcommand and its handler.
 
-Each subcommand is a :class:`CommandDef` built from :class:`ArgDef` pieces.
-``COMMANDS`` at module bottom is the authoritative catalog — higher-level
-consumers (terok) import it to build their own CLI frontends.
+The ``COMMANDS`` tuple at the bottom is the authoritative registry;
+higher-level frontends (``terok``) import it to wire the same commands
+into their own CLI without duplicating argument definitions.
 """
 
 from __future__ import annotations
@@ -57,13 +57,13 @@ def _preflight_or_exit(
     assume_yes: bool,
     skip_preflight: bool,
 ) -> bool:
-    """Gate the launch on :func:`run_preflight` with TTY-aware fallback.
+    """Decide whether ``run``/``run-tool`` may proceed without stdin prompting.
 
-    Without a TTY *and* without ``--yes``, interactive prompts cannot
-    succeed — rather than crashing on ``input()``, report the condition
-    and point the operator at ``terok-executor setup``.
-    ``--no-preflight`` short-circuits the whole check (use on hosts
-    where another tool manages the prerequisites).
+    A non-TTY session cannot answer ``[Y/n]`` prompts, so the preflight
+    refuses to run interactively there unless ``--yes`` promises blanket
+    acceptance or ``--no-preflight`` waives the check entirely.  The
+    refusal path points the operator at the explicit setup command
+    instead of crashing on a blocked ``input()``.
     """
     import sys
 
@@ -367,12 +367,10 @@ def _handle_setup(
 ) -> None:
     """Bootstrap the full terok-executor stack on a fresh host.
 
-    Phases, any of which can be skipped individually:
-    1. ``sandbox setup`` — shield hooks + vault + gate (bottom-layer services)
-    2. L0+L1 container image build — the slow one; banner warns first-run only
-
-    In ``--check`` mode, nothing is installed — the handler reports each
-    phase's readiness and exits non-zero when something is missing.
+    Installs the sandbox services (shield hooks + vault + gate) and
+    builds the L0+L1 container images.  ``--check`` reports status
+    without touching anything and exits non-zero when something is
+    missing.
     """
     if check:
         _print_setup_status(base)
