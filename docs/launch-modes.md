@@ -56,7 +56,7 @@ terok-executor stop my-task    # stop a specific container
 
 | Flag | Description |
 |------|-------------|
-| `--gate` / `--no-gate` | Enable or disable the egress firewall (default: on) |
+| `--gate` / `--no-gate` | Route git clone through the host-side gate mirror, or skip it and let the container clone upstream directly (default: on — the gate is faster and offers staleness comparison; the shield firewall is unaffected) |
 | `--restricted` | No auto-approve, no-new-privileges |
 | `--branch <ref>` | Check out a specific git branch |
 | `--name <name>` | Container name override |

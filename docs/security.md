@@ -5,16 +5,19 @@ a vault, optional restricted mode, and rootless containers.
 
 ## Egress firewall
 
-On by default. The firewall
-([terok-shield](https://terok-ai.github.io/terok-shield/)) restricts
-outbound traffic to explicitly allowed domains — the agent's API endpoint,
-package registries, and git hosts. Everything else is blocked at the
-nftables level.
+On by default for every container that starts through terok-executor.
+The firewall ([terok-shield](https://terok-ai.github.io/terok-shield/))
+restricts outbound traffic to explicitly allowed domains — the agent's
+API endpoint, package registries, and git hosts.  Everything else is
+blocked at the nftables level.
 
-```bash
-terok-executor run claude . -p "…"         # firewall on (default)
-terok-executor run claude . --no-gate -p "…"  # disable for development
-```
+The firewall is attached via OCI hooks at install time (``terok-executor
+setup`` / ``terok-sandbox setup``); there is no per-run opt-out.  To
+loosen it for development, edit the shield profile or run
+``terok-executor uninstall`` + reinstall without the hooks.
+
+The git gate mirror (``--gate`` / ``--no-gate``) is a separate concern
+from the firewall — see [Launch modes](launch-modes.md) for that flag.
 
 ## Vault
 
