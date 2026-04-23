@@ -4,7 +4,7 @@ build-backend = "poetry_dynamic_versioning.backend"
 
 [tool.poetry]
 name = "terok-executor"
-version = "0.0.113"
+version = "0.0.114"
 description = "Single-agent task runner for hardened Podman containers"
 readme = "README.md"
 license = "Apache-2.0"
@@ -24,15 +24,16 @@ packages = [
 
 [tool.poetry.dependencies]
 python = ">=3.12,<4.0"
-# DEV-TIME BRANCH PIN — tracks sandbox's feat/optional-gate-and-upstream
-# branch (terok-ai/terok-sandbox#196) which itself rebases onto master so
-# the PodmanInspector additions from #195 flow through transitively.  The
+# DEV-TIME BRANCH PIN — tracks sandbox's refactor/config-schema-ownership
+# branch (terok-ai/terok-sandbox#202) which exports SandboxConfigView and
+# the eight sandbox-owned section models that this PR composes onto.  The
 # release script flips this back to a release-URL pin before cutting.
-terok-sandbox = {url = "https://github.com/terok-ai/terok-sandbox/releases/download/v0.0.94/terok_sandbox-0.0.94-py3-none-any.whl"}
+terok-sandbox = {url = "https://github.com/terok-ai/terok-sandbox/releases/download/v0.0.95/terok_sandbox-0.0.95-py3-none-any.whl"}
 "ruamel.yaml" = ">=0.18"
 Jinja2 = ">=3.1"
 tomli-w = ">=1.0"
 pwinput = ">=1.0.3"
+pydantic = ">=2.9"
 
 [tool.poetry.group.dev.dependencies]
 pre-commit = ">=4.0"

@@ -31,6 +31,9 @@ from terok_sandbox.doctor import CheckVerdict, DoctorCheck
 # -- Commands + CLI surface ----------------------------------------------------
 from .commands import COMMANDS as AGENT_COMMANDS, CommandDef
 
+# -- Config schema (executor-owned slice of the shared config.yml) -----------
+from .config_schema import ExecutorConfigView, RawImageSection
+
 # -- Container (build, env assembly, runner) -----------------------------------
 from .container.build import (
     AGENTS_LABEL,
@@ -157,6 +160,9 @@ __all__ = [
     "ConfigScope",
     "ConfigStack",
     "resolve_provider_value",
+    # Config schema (executor-owned slice of the shared config.yml)
+    "ExecutorConfigView",
+    "RawImageSection",
     # Build: image construction + resource staging
     "AGENTS_LABEL",
     "DEFAULT_BASE_IMAGE",
