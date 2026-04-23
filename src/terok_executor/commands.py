@@ -377,9 +377,9 @@ def _handle_setup(
         return
 
     if not no_sandbox:
-        from terok_sandbox.commands import _handle_sandbox_setup
+        from .sandbox import ensure_sandbox_ready
 
-        _handle_sandbox_setup(root=root)
+        ensure_sandbox_ready(root=root)
 
     if not no_images:
         _build_images_with_banner(base, family)
@@ -407,9 +407,9 @@ def _handle_uninstall(
     if not keep_images:
         _remove_images(base)
     if not no_sandbox:
-        from terok_sandbox.commands import _handle_sandbox_uninstall
+        from .sandbox import uninstall_sandbox_services
 
-        _handle_sandbox_uninstall(root=root)
+        uninstall_sandbox_services(root=root)
 
     print()
     print("Uninstall complete.")

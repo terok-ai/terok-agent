@@ -101,6 +101,9 @@ from .roster import (
     parse_agent_selection,
 )
 
+# -- Sandbox bootstrap composition ---------------------------------------------
+from .sandbox import ensure_sandbox_ready, uninstall_sandbox_services
+
 # -- Storage queries (filesystem footprint measurement) -------------------------
 from .storage import (
     SharedMountStorageInfo,
@@ -216,4 +219,7 @@ __all__ = [
     # Sealed injection helpers
     "inject_agent_config",
     "inject_prompt",
+    # Sandbox bootstrap composition
+    "ensure_sandbox_ready",
+    "uninstall_sandbox_services",
 ]

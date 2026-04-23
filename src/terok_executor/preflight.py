@@ -280,17 +280,22 @@ def _confirm(prompt: str, *, assume_yes: bool = False) -> bool:
 
 
 def _fix_sandbox_services() -> bool:
-    """Run the ``sandbox setup`` aggregator to install shield+vault+gate.
+    """Run the executor setup path to install + wire up shield+vault+gate+clearance.
 
     Always installs into the per-user scope.  System-wide installation
     is an explicit operator choice, exposed via ``terok-executor setup
     --root``; the interactive preflight path never escalates to sudo
-    behind the user's back.
+    behind the user's back.  Goes through
+    :func:`terok_executor.sandbox.ensure_sandbox_ready` so the vault
+    picks up the roster-derived ``routes.json`` on first start — a
+    bare sandbox aggregator call would leave the vault running with
+    no authorization config, which breaks credential fetch on the
+    next agent run.
     """
-    from terok_sandbox.commands import _handle_sandbox_setup
+    from terok_executor.sandbox import ensure_sandbox_ready
 
     try:
-        _handle_sandbox_setup()
+        ensure_sandbox_ready()
     except (SystemExit, Exception) as exc:  # noqa: BLE001
         print(f"  sandbox setup failed: {exc}", file=sys.stderr)
         return False

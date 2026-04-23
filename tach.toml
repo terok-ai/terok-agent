@@ -177,6 +177,17 @@ depends_on = [
     "terok_executor.roster.loader",
 ]
 
+# ── Sandbox bootstrap composition ──────────────────────────────────
+
+# Ties the sandbox install aggregator to the executor's route
+# generator so every caller that wants a functional runtime reaches
+# for one entry point.
+[[modules]]
+path = "terok_executor.sandbox"
+depends_on = [
+    "terok_executor.roster.loader",
+]
+
 # ── Preflight — prerequisite checks ────────────────────────────────
 
 # Pre-launch checks + interactive fixers for `terok-executor run`
@@ -188,6 +199,7 @@ depends_on = [
     "terok_executor.credentials.vault_config",
     "terok_executor.paths",
     "terok_executor.roster.loader",
+    "terok_executor.sandbox",
 ]
 
 # ── CLI surface ────────────────────────────────────────────────────
@@ -203,6 +215,7 @@ depends_on = [
     "terok_executor.paths",
     "terok_executor.preflight",
     "terok_executor.roster.loader",
+    "terok_executor.sandbox",
 ]
 
 # CLI entry point — wires command registry to argparse
@@ -241,4 +254,5 @@ depends_on = [
     "terok_executor.provider.instructions",
     "terok_executor.provider.providers",
     "terok_executor.roster",
+    "terok_executor.sandbox",
 ]
