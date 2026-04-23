@@ -4,7 +4,7 @@ build-backend = "poetry_dynamic_versioning.backend"
 
 [tool.poetry]
 name = "terok-executor"
-version = "0.0.108"
+version = "0.0.109"
 description = "Single-agent task runner for hardened Podman containers"
 readme = "README.md"
 license = "Apache-2.0"
@@ -28,7 +28,7 @@ python = ">=3.12,<4.0"
 # branch (terok-ai/terok-sandbox#196) which itself rebases onto master so
 # the PodmanInspector additions from #195 flow through transitively.  The
 # release script flips this back to a release-URL pin before cutting.
-terok-sandbox = {url = "https://github.com/terok-ai/terok-sandbox/releases/download/v0.0.89/terok_sandbox-0.0.89-py3-none-any.whl"}
+terok-sandbox = {url = "https://github.com/terok-ai/terok-sandbox/releases/download/v0.0.90/terok_sandbox-0.0.90-py3-none-any.whl"}
 "ruamel.yaml" = ">=0.18"
 Jinja2 = ">=3.1"
 tomli-w = ">=1.0"
