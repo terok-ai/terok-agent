@@ -13,7 +13,8 @@ from terok_executor.credentials.auth import (
     PHANTOM_CREDENTIALS_MARKER,
     _apply_post_capture_state,
     _capture_credentials,
-    _copy_real_credentials,
+    _claude_oauth_mount_writer,
+    _codex_oauth_mount_writer,
     _write_claude_credentials_file,
     store_api_key,
 )
@@ -405,8 +406,8 @@ class TestCaptureWritesCredentialsFile:
 
         assert not (mounts / "_claude-config" / ".credentials.json").exists()
 
-    def test_capture_non_claude_skips_credentials_file(self, tmp_path: Path) -> None:
-        """Non-Claude providers don't write .credentials.json even with OAuth."""
+    def test_capture_codex_default_leaves_mount_empty(self, tmp_path: Path) -> None:
+        """Codex OAuth capture without expose wipes the shared mount copy."""
         (tmp_path / "auth.json").write_text(
             json.dumps({"tokens": {"access_token": "sk-oai", "refresh_token": "rt"}})
         )
@@ -418,31 +419,74 @@ class TestCaptureWritesCredentialsFile:
             _capture_credentials("codex", tmp_path, "default", mounts_base=mounts)
 
         assert not (mounts / "_claude-config").exists()
+        assert not (mounts / "_codex-config" / "auth.json").exists()
 
 
-class TestCopyRealCredentials:
-    """Verify _copy_real_credentials preserves the real token file."""
+class TestClaudeOAuthMountWriter:
+    """Verify the Claude mount reconciler preserves or phantomises creds."""
 
-    def test_copies_real_file(self, tmp_path: Path) -> None:
-        """Real .credentials.json is copied verbatim to the shared mount."""
+    def test_expose_copies_real_file(self, tmp_path: Path) -> None:
+        """Real .credentials.json is copied verbatim when exposed."""
         auth_dir = tmp_path / "auth"
         auth_dir.mkdir()
         real_creds = {"claudeAiOauth": {"accessToken": "real-token-abc"}}
         (auth_dir / ".credentials.json").write_text(json.dumps(real_creds))
 
         mounts = tmp_path / "mounts"
-        _copy_real_credentials(auth_dir, mounts)
+        _claude_oauth_mount_writer(auth_dir, mounts, real_creds, expose_token=True)
 
         dest = mounts / "_claude-config" / ".credentials.json"
         assert dest.is_file()
         assert json.loads(dest.read_text()) == real_creds
 
-    def test_raises_when_file_missing(self, tmp_path: Path) -> None:
-        """Raises FileNotFoundError when auth dir has no .credentials.json."""
+    def test_expose_raises_when_file_missing(self, tmp_path: Path) -> None:
+        """Raises FileNotFoundError when exposed and no .credentials.json."""
         import pytest
 
         with pytest.raises(FileNotFoundError):
-            _copy_real_credentials(tmp_path, tmp_path / "mounts")
+            _claude_oauth_mount_writer(tmp_path, tmp_path / "mounts", {}, expose_token=True)
+
+
+class TestCodexOAuthMountWriter:
+    """Verify the Codex mount reconciler copies-or-wipes auth.json."""
+
+    def test_expose_copies_real_auth_json(self, tmp_path: Path) -> None:
+        """expose_token=True copies auth.json into _codex-config."""
+        auth_dir = tmp_path / "auth"
+        auth_dir.mkdir()
+        payload = {"tokens": {"access_token": "sk-oai", "refresh_token": "rt"}}
+        (auth_dir / "auth.json").write_text(json.dumps(payload))
+
+        mounts = tmp_path / "mounts"
+        _codex_oauth_mount_writer(auth_dir, mounts, payload, expose_token=True)
+
+        dest = mounts / "_codex-config" / "auth.json"
+        assert dest.is_file()
+        assert json.loads(dest.read_text()) == payload
+
+    def test_default_wipes_stale_auth_json(self, tmp_path: Path) -> None:
+        """expose_token=False removes any prior auth.json from the mount."""
+        mounts = tmp_path / "mounts"
+        codex_dir = mounts / "_codex-config"
+        codex_dir.mkdir(parents=True)
+        stale = codex_dir / "auth.json"
+        stale.write_text("stale")
+
+        _codex_oauth_mount_writer(tmp_path, mounts, {}, expose_token=False)
+
+        assert not stale.exists()
+
+    def test_default_no_mount_dir_is_safe(self, tmp_path: Path) -> None:
+        """expose_token=False is a no-op when the mount dir is absent."""
+        # Must not raise even when the target file was never created.
+        _codex_oauth_mount_writer(tmp_path, tmp_path / "mounts", {}, expose_token=False)
+
+    def test_expose_raises_when_file_missing(self, tmp_path: Path) -> None:
+        """Raises FileNotFoundError when exposed and no auth.json."""
+        import pytest
+
+        with pytest.raises(FileNotFoundError):
+            _codex_oauth_mount_writer(tmp_path, tmp_path / "mounts", {}, expose_token=True)
 
 
 class TestCaptureWithExposeToken:

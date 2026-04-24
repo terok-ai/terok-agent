@@ -22,6 +22,7 @@ from __future__ import annotations
 import shutil
 import subprocess
 import sys
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -384,8 +385,12 @@ def _capture_credentials(
                 print(f"  {f}")
         return
 
-    is_claude_oauth = provider_name == "claude" and cred_data.get("type") == "oauth"
-    exposed_directly = expose_token and is_claude_oauth
+    is_oauth = cred_data.get("type") == "oauth"
+    post_capture = _OAUTH_MOUNT_WRITERS.get(provider_name) if is_oauth else None
+    # Tier 3 bypass: the host-side vault never refreshes the token, so the
+    # container must own its lifecycle.  Storing in the DB would let the
+    # background refresher rotate a token nobody brokers back to the mount.
+    exposed_directly = expose_token and post_capture is not None
 
     if exposed_directly:
         print(f"\nCredentials for {provider_name} bypassing vault DB (exposed directly)")
@@ -412,33 +417,17 @@ def _capture_credentials(
             )
             return
 
-    # Write .credentials.json — real token (tier 3) or phantom marker (default)
-    if is_claude_oauth:
+    # Reconcile the shared mount with the captured credential.  Provider-specific
+    # writers drop a phantom marker (proxied mode) or copy the real file (exposed).
+    if post_capture is not None:
         if mounts_base is None:
             from terok_executor.paths import mounts_dir
 
             mounts_base = mounts_dir()
         try:
-            if expose_token:
-                _copy_real_credentials(auth_dir, mounts_base)
-                print("Real .credentials.json copied to shared Claude config mount.")
-            else:
-                _write_claude_credentials_file(cred_data, mounts_base)
-                print("Subscription metadata written to shared Claude config mount.")
+            post_capture(auth_dir, mounts_base, cred_data, expose_token)
         except Exception as exc:  # noqa: BLE001
-            print(f"Warning: could not write .credentials.json: {exc}")
-        if expose_token:
-            print(
-                "\nNote: Claude OAuth token is EXPOSED in the shared mount."
-                "\n      Every task container can read the real token."
-                "\n      The vault does NOT protect it."
-            )
-        else:
-            print(
-                "\nNote: Claude OAuth credential is shared across all task containers."
-                "\n      API calls are routed through the vault — the real"
-                "\n      token stays on the host."
-            )
+            print(f"Warning: could not reconcile {provider_name} mount: {exc}")
 
     # Apply declarative post-capture state from roster YAML
     if auth_provider and auth_provider.post_capture_state:
@@ -455,18 +444,80 @@ def _capture_credentials(
             )
 
 
-def _copy_real_credentials(auth_dir: Path, mounts_base: Path) -> None:
-    """Copy the real ``.credentials.json`` from the auth dir to the shared mount.
+def _claude_oauth_mount_writer(
+    auth_dir: Path, mounts_base: Path, cred_data: dict, expose_token: bool
+) -> None:
+    """Reconcile Claude's shared mount after an OAuth capture.
 
-    Used by tier 3 (``expose_oauth_token``) — the container needs the actual
-    OAuth token for direct API calls to ``api.anthropic.com``.
+    Default path writes a phantom ``.credentials.json`` with subscription
+    metadata only; tier 3 copies the real credential file so Claude Code
+    can reach ``api.anthropic.com`` directly (its hardcoded OAuth host).
     """
-    src = auth_dir / ".credentials.json"
-    if not src.is_file():
-        raise FileNotFoundError(f"No .credentials.json in {auth_dir}")
-    dest_dir = mounts_base / "_claude-config"
-    dest_dir.mkdir(parents=True, exist_ok=True)
-    shutil.copy2(src, dest_dir / ".credentials.json")
+    if expose_token:
+        src = auth_dir / ".credentials.json"
+        if not src.is_file():
+            raise FileNotFoundError(f"No .credentials.json in {auth_dir}")
+        dest_dir = mounts_base / "_claude-config"
+        dest_dir.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(src, dest_dir / ".credentials.json")
+        print("Real .credentials.json copied to shared Claude config mount.")
+        print(
+            "\nNote: Claude OAuth token is EXPOSED in the shared mount."
+            "\n      Every task container can read the real token."
+            "\n      The vault does NOT protect it."
+        )
+    else:
+        _write_claude_credentials_file(cred_data, mounts_base)
+        print("Subscription metadata written to shared Claude config mount.")
+        print(
+            "\nNote: Claude OAuth credential is shared across all task containers."
+            "\n      API calls are routed through the vault — the real"
+            "\n      token stays on the host."
+        )
+
+
+def _codex_oauth_mount_writer(
+    auth_dir: Path, mounts_base: Path, cred_data: dict, expose_token: bool
+) -> None:
+    """Reconcile Codex's shared mount after an OAuth capture.
+
+    Only the expose path is wired in Phase 1: the real ``auth.json`` is
+    copied into the shared mount so the in-container Codex CLI reads the
+    live token.  The non-expose path wipes any prior copy — Phase 3 will
+    add a proxied variant that restores a phantom marker.
+    """
+    del cred_data
+    dest_dir = mounts_base / "_codex-config"
+    dest_file = dest_dir / "auth.json"
+    if expose_token:
+        src = auth_dir / "auth.json"
+        if not src.is_file():
+            raise FileNotFoundError(f"No auth.json in {auth_dir}")
+        dest_dir.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(src, dest_file)
+        print("Real auth.json copied to shared Codex config mount.")
+        print(
+            "\nNote: Codex OAuth token is EXPOSED in the shared mount."
+            "\n      Every task container can read the real token."
+            "\n      The vault does NOT protect it."
+        )
+    else:
+        dest_file.unlink(missing_ok=True)
+        print(
+            "\nNote: Codex OAuth token was captured to the vault DB but is"
+            "\n      NOT reachable from task containers — no proxy route"
+            "\n      is wired yet.  Set agent.codex.expose_oauth_token to"
+            "\n      mount the real token (unsafe, experimental)."
+        )
+
+
+#: Maps provider name → post-capture mount reconciler.  OAuth-capable
+#: providers register here to share the expose/proxy dispatch in
+#: :func:`_capture_credentials`.
+_OAUTH_MOUNT_WRITERS: dict[str, Callable[[Path, Path, dict, bool], None]] = {
+    "claude": _claude_oauth_mount_writer,
+    "codex": _codex_oauth_mount_writer,
+}
 
 
 def _write_claude_credentials_file(cred_data: dict, mounts_base: Path) -> None:
