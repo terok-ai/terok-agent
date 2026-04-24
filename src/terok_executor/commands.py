@@ -49,6 +49,102 @@ class CommandDef:
 # ── Handlers ──
 
 
+def _setup_verdict_or_exit(*, skip: bool) -> None:
+    """Cheap stamp-based gate that runs before live preflight.
+
+    Reads :func:`terok_sandbox.needs_setup` and bounces the user with
+    a structured exit code when the install is missing or stale:
+
+    - ``OK`` → return; live preflight proceeds.
+    - ``FIRST_RUN`` / ``STALE_AFTER_UPDATE`` / ``STAMP_CORRUPT`` →
+      ``raise SystemExit(3)`` after printing a one-line fix hint
+      that points the user at ``terok-executor setup``.
+    - ``STALE_AFTER_DOWNGRADE`` → ``raise SystemExit(4)`` after a
+      multi-line warning naming the downgraded package(s).
+      Downgrades aren't tested; refuse rather than risk inconsistent
+      state from older code reading newer schemas.
+
+    The ``skip`` flag ( ``--no-preflight``) waives this gate too —
+    the user's escape hatch is one knob, not two.  Sub-millisecond
+    cost on the OK path so wiring it in front of live preflight
+    doesn't change perceived startup latency.
+    """
+    if skip:
+        return
+
+    import sys
+
+    from terok_sandbox import SetupVerdict, needs_setup
+    from terok_sandbox.setup_stamp import _installed_versions, _read_stamp, stamp_path
+
+    verdict = needs_setup()
+    if verdict is SetupVerdict.OK:
+        return
+
+    if verdict is SetupVerdict.STALE_AFTER_DOWNGRADE:
+        downgraded = _name_downgraded_packages(stamp_path(), _read_stamp, _installed_versions)
+        names = ", ".join(downgraded) or "one or more packages"
+        print(
+            f"terok-executor: refusing to run — downgrade detected ({names}).\n"
+            "  Downgrades aren't supported; older code may not read newer state correctly.\n"
+            "  Either upgrade back to the stamped version, or "
+            "remove the stamp at your own risk:\n"
+            f"    rm {stamp_path()}",
+            file=sys.stderr,
+        )
+        raise SystemExit(4)
+
+    # FIRST_RUN, STALE_AFTER_UPDATE, STAMP_CORRUPT all collapse to "run setup".
+    nudge = {
+        SetupVerdict.FIRST_RUN: "no setup stamp found — terok-executor hasn't been initialised",
+        SetupVerdict.STALE_AFTER_UPDATE: (
+            "package versions changed since the last setup — re-run to apply"
+        ),
+        SetupVerdict.STAMP_CORRUPT: "setup stamp is unreadable — re-run setup to refresh it",
+    }[verdict]
+    print(
+        f"terok-executor: {nudge}.\n"
+        "  Fix:    terok-executor setup\n"
+        "  Or:     terok-executor run --no-preflight ...   (skip the gate)",
+        file=sys.stderr,
+    )
+    raise SystemExit(3)
+
+
+def _name_downgraded_packages(
+    path: Path,
+    read_stamp_fn: Callable[[Path], dict[str, str]],
+    installed_fn: Callable[[], dict[str, str]],
+) -> list[str]:
+    """Return ``[pkg]`` whose installed version is < stamped, or missing entirely.
+
+    Best-effort: if the stamp can't be re-read (race with a parallel
+    setup overwrite) we return an empty list so the caller falls back
+    to a generic "downgrade detected" message instead of crashing.
+    """
+    from packaging.version import InvalidVersion, Version
+
+    try:
+        stamped = read_stamp_fn(path)
+    except Exception:  # noqa: BLE001 — diagnostic helper, never the source of truth
+        return []
+    installed = installed_fn()
+
+    out: list[str] = []
+    for pkg, stamp_ver in stamped.items():
+        if pkg not in installed:
+            out.append(f"{pkg} (uninstalled)")
+            continue
+        cur = installed[pkg]
+        try:
+            if Version(cur) < Version(stamp_ver):
+                out.append(f"{pkg} {stamp_ver} → {cur}")
+        except InvalidVersion:
+            if cur < stamp_ver:
+                out.append(f"{pkg} {stamp_ver} → {cur}")
+    return out
+
+
 def _preflight_or_exit(
     provider: str,
     *,
@@ -138,11 +234,13 @@ def _handle_run(
     no_preflight: bool = False,
 ) -> None:
     """Run an agent in a hardened container."""
-
+    _setup_verdict_or_exit(skip=no_preflight)
     if not _preflight_or_exit(
         agent, base=base, family=family, assume_yes=yes, skip_preflight=no_preflight
     ):
-        raise SystemExit(1)
+        # Preflight failure = setup-needed signal for the script-friendly
+        # exit-code contract (3 = run setup; 1 stays for task-level failure).
+        raise SystemExit(3)
 
     from .container.runner import AgentRunner
 
@@ -216,10 +314,11 @@ def _handle_run_tool(
     no_preflight: bool = False,
 ) -> None:
     """Run a tool in a sidecar container."""
+    _setup_verdict_or_exit(skip=no_preflight)
     if not _preflight_or_exit(
         tool, base=base, family=family, assume_yes=yes, skip_preflight=no_preflight
     ):
-        raise SystemExit(1)
+        raise SystemExit(3)
 
     from .container.runner import AgentRunner
 

@@ -109,6 +109,7 @@ class TestSharedDirArgs:
         from terok_executor.commands import _handle_run
 
         with (
+            patch("terok_executor.commands._setup_verdict_or_exit"),
             patch("terok_executor.commands._preflight_or_exit", return_value=True),
             patch("terok_executor.container.runner.AgentRunner") as mock_cls,
         ):
@@ -130,6 +131,7 @@ class TestSharedDirArgs:
         from terok_executor.commands import _handle_run
 
         with (
+            patch("terok_executor.commands._setup_verdict_or_exit"),
             patch("terok_executor.commands._preflight_or_exit", return_value=True),
             patch("terok_executor.container.runner.AgentRunner") as mock_cls,
         ):
