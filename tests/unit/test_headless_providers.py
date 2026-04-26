@@ -51,8 +51,8 @@ def _all_wrappers(*, has_agents: bool = False) -> str:
 class TestAgentProviderRegistry:
     """Tests for the AGENT_PROVIDERS registry."""
 
-    def test_all_eight_providers_exist(self) -> None:
-        """Registry contains exactly the eight expected providers."""
+    def test_registry_contains_expected_providers(self) -> None:
+        """Registry contains exactly the expected set of bundled providers."""
         expected = {
             "claude",
             "codex",

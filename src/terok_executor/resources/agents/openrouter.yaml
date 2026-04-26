@@ -49,16 +49,14 @@ opencode:
   api_key_hint: |-
     Create an API key at:
       https://openrouter.ai/keys
-    OpenRouter exposes ~300 models from Anthropic, OpenAI, Google,
-    Meta, DeepSeek and others through a single OpenAI-compatible
-    endpoint; usage is billed against your OpenRouter credits.
+    OpenRouter is an OpenAI-compatible aggregator covering models from
+    Anthropic, OpenAI, Google, Meta, DeepSeek and others; usage is
+    billed against your OpenRouter credits.
 
 # OpenCode runtime mounts are defined in opencode.yaml and deduplicated
 # by the registry — no need to repeat them here.
 
 install:
-  # All openrouter wrappers are symlinks to the opencode-provider family;
-  # selecting openrouter transitively pulls opencode in.
   depends_on: [opencode]
   run_as_root: |
     RUN set -eux; \
@@ -67,4 +65,4 @@ install:
         ln -sf opencode-toad         /usr/local/bin/openroutertoad
 
 help:
-  label: '  \033[36mopenrouter\033[0m - OpenCode with OpenRouter (\033[2m~300 models\033[0m)'
+  label: '  \033[36mopenrouter\033[0m - OpenCode with OpenRouter'
