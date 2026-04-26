@@ -25,6 +25,7 @@ class TestVaultRoutesParsed:
         assert route.route_prefix == "claude"
         assert route.upstream == "https://api.anthropic.com"
         assert route.auth_header == "dynamic"
+        assert route.oauth_extra_headers == {"anthropic-beta": "oauth-2025-04-20"}
         assert "ANTHROPIC_API_KEY" in route.phantom_env
         assert "CLAUDE_CODE_OAUTH_TOKEN" in route.oauth_phantom_env
         assert route.base_url_env == "ANTHROPIC_BASE_URL"
@@ -36,6 +37,7 @@ class TestVaultRoutesParsed:
         assert route is not None
         assert route.upstream == "https://api.openai.com"
         assert route.path_upstreams == {"/backend-api/": "https://chatgpt.com"}
+        assert route.oauth_extra_headers == {}
         assert route.shared_config_patch is not None
         assert route.shared_config_patch["file"] == "config.toml"
 
@@ -110,7 +112,9 @@ class TestGenerateRoutesJson:
         assert "claude" in routes
         assert routes["claude"]["upstream"] == "https://api.anthropic.com"
         assert routes["claude"]["auth_header"] == "dynamic"
+        assert routes["claude"]["oauth_extra_headers"] == {"anthropic-beta": "oauth-2025-04-20"}
         assert routes["codex"]["path_upstreams"] == {"/backend-api/": "https://chatgpt.com"}
+        assert "oauth_extra_headers" not in routes["codex"]
 
     def test_all_routes_have_upstream(self) -> None:
         """Every route in the JSON has an upstream field."""

@@ -40,6 +40,8 @@ vault:
   # credential type stored in the DB.
   auth_header: dynamic
   auth_prefix: ""
+  oauth_extra_headers:
+    anthropic-beta: oauth-2025-04-20
   credential_type: oauth
   credential_file: .credentials.json
   # OAuth token refresh -- endpoint and client_id extracted from Claude Code

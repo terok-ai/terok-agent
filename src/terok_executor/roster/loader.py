@@ -87,6 +87,9 @@ class VaultRoute:
     path_upstreams: dict[str, str] = field(default_factory=dict)
     """Optional request-path prefix → upstream-base overrides."""
 
+    oauth_extra_headers: dict[str, str] = field(default_factory=dict)
+    """Provider-specific headers added only when forwarding OAuth credentials."""
+
     auth_header: str = "Authorization"
     """HTTP header name for the real credential."""
 
@@ -373,6 +376,8 @@ class AgentRoster:
             }
             if route.path_upstreams:
                 entry["path_upstreams"] = route.path_upstreams
+            if route.oauth_extra_headers:
+                entry["oauth_extra_headers"] = route.oauth_extra_headers
             if route.oauth_refresh:
                 entry["oauth_refresh"] = route.oauth_refresh
             routes[route.provider] = entry
@@ -858,11 +863,18 @@ def _to_vault_route(name: str, data: dict) -> VaultRoute | None:
         raise ValueError(
             f"Agent {name!r}: path_upstreams must be a mapping, got {type(path_upstreams).__name__}"
         )
+    oauth_extra_headers = cp.get("oauth_extra_headers") or {}
+    if not isinstance(oauth_extra_headers, dict):
+        raise ValueError(
+            f"Agent {name!r}: oauth_extra_headers must be a mapping, "
+            f"got {type(oauth_extra_headers).__name__}"
+        )
     return VaultRoute(
         provider=name,
         route_prefix=cp["route_prefix"],
         upstream=cp["upstream"],
         path_upstreams=dict(path_upstreams),
+        oauth_extra_headers={str(k): str(v) for k, v in oauth_extra_headers.items()},
         auth_header=cp.get("auth_header", "Authorization"),
         auth_prefix=cp.get("auth_prefix", "Bearer "),
         credential_type=cp.get("credential_type", "api_key"),

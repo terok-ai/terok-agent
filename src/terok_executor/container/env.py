@@ -133,6 +133,10 @@ class ContainerEnvSpec:
     OAuth routing without affecting standalone executor defaults.
     """
 
+    disabled_vault_patch_providers: frozenset[str] | None = None
+    """Provider subset whose previously managed config patch values should
+    be removed if still owned by terok.  ``None`` removes nothing."""
+
     # -- Permissions -------------------------------------------------------
 
     unrestricted: bool = True
@@ -284,6 +288,7 @@ def assemble_container_env(
         roster,
         mounts_base,
         providers=spec.enabled_vault_patch_providers,
+        disabled_providers=spec.disabled_vault_patch_providers,
     )
 
     # 9. Vault

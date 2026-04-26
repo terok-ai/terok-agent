@@ -21,6 +21,7 @@ resolved centrally — agent YAMLs only need to reference the tokens.
 from __future__ import annotations
 
 import errno
+import json
 import logging
 import os
 import sys
@@ -32,6 +33,12 @@ if TYPE_CHECKING:
     from terok_executor.roster.loader import AgentRoster
 
 _logger = logging.getLogger(__name__)
+
+_MANAGED_CONFIG_FILENAME = ".terok-managed-config.json"
+"""Sidecar file that records config values last written by terok."""
+
+_MANAGED_CONFIG_VERSION = 1
+"""Schema version for :data:`_MANAGED_CONFIG_FILENAME`."""
 
 
 class ConfigPatchError(RuntimeError):
@@ -98,12 +105,16 @@ def apply_shared_config_patches(
     mounts_base: Path,
     *,
     providers: frozenset[str] | None = None,
+    disabled_providers: frozenset[str] | None = None,
 ) -> None:
-    """Re-apply ``shared_config_patch`` for the selected providers.
+    """Reconcile ``shared_config_patch`` for enabled and disabled providers.
 
     Called during task start so shared mount directories (which may have
     been recreated empty) always contain the correct vault addresses.
-    Idempotent: safe to call on every launch.
+    Idempotent: safe to call on every launch.  Disabled providers have
+    previously managed values removed only when the live config still
+    matches the sidecar value terok wrote last time; user-edited values
+    are preserved and ownership is dropped.
 
     Args:
         roster: Loaded agent roster.
@@ -112,17 +123,43 @@ def apply_shared_config_patches(
             ``None`` means "all providers with a patch".  An empty set
             disables patching entirely.  A non-empty set restricts
             patching to that provider subset.
+        disabled_providers:
+            Provider subset whose previously managed patch values should
+            be reconciled away.  ``None`` removes nothing; callers pass an
+            explicit set when a feature mode disables provider routing.
 
     Raises [`ConfigPatchError`][terok_executor.credentials.vault_config.ConfigPatchError] on failure — callers must not start
     the container if vault routing cannot be established.
     """
+    patched_routes = {
+        name: route
+        for name, route in roster.vault_routes.items()
+        if route.shared_config_patch and (providers is None or name in providers)
+    }
+    disabled_routes = {
+        name: route
+        for name, route in roster.vault_routes.items()
+        if route.shared_config_patch and disabled_providers and name in disabled_providers
+    }
+
+    for name in disabled_routes:
+        auth_info = roster.auth_providers.get(name)
+        if not auth_info:
+            continue
+        try:
+            _remove_managed_patch_values(mounts_base / auth_info.host_dir_name, name)
+            _logger.debug("Removed managed config patch for disabled provider %s", name)
+        except ConfigPatchError:
+            raise
+        except Exception as exc:
+            raise ConfigPatchError(f"Failed to remove vault config patch for {name}") from exc
+
+    if not patched_routes:
+        return
+
     location = resolve_vault_location()
 
-    for name, route in roster.vault_routes.items():
-        if providers is not None and name not in providers:
-            continue
-        if not route.shared_config_patch:
-            continue
+    for name, route in patched_routes.items():
         auth_info = roster.auth_providers.get(name)
         if not auth_info:
             continue
@@ -134,9 +171,12 @@ def apply_shared_config_patches(
             config_path = _safe_config_path(shared_dir, patch["file"])
 
             if "yaml_set" in patch:
-                _apply_yaml_patch(config_path, patch, location)
+                records = _apply_yaml_patch(config_path, patch, location)
             elif "toml_set" in patch:
-                _apply_toml_patch(config_path, patch, location)
+                records = _apply_toml_patch(config_path, patch, location)
+            else:
+                records = []
+            _record_managed_patch_values(shared_dir, name, patch["file"], records)
             _logger.debug("Applied config patch for %s → %s", name, config_path)
         except ConfigPatchError:
             raise
@@ -251,6 +291,16 @@ def _write_nofollow(path: Path, data: bytes) -> None:
         os.close(fd)
 
 
+def _delete_nofollow(path: Path) -> None:
+    """Delete *path* without following symlinks; ignore missing files."""
+    try:
+        path.unlink()
+    except FileNotFoundError:
+        return
+    except IsADirectoryError as exc:
+        raise ConfigPatchError(f"refusing to delete directory at {path}") from exc
+
+
 def _substitute(value: object, location: VaultLocation) -> object:
     """Expand ``{vault_url}`` / ``{vault_socket}`` tokens in a patch value."""
     if not isinstance(value, str):
@@ -258,48 +308,196 @@ def _substitute(value: object, location: VaultLocation) -> object:
     return value.replace("{vault_url}", location.url).replace("{vault_socket}", location.socket)
 
 
-def _apply_toml_patch(config_path: Path, patch: dict, location: VaultLocation) -> None:
-    """Patch top-level TOML keys or an array-of-tables entry."""
+def _empty_metadata() -> dict:
+    """Return an empty managed-config sidecar payload."""
+    return {"version": _MANAGED_CONFIG_VERSION, "files": {}}
+
+
+def _managed_config_path(shared_dir: Path) -> Path:
+    """Return the safe sidecar path inside *shared_dir*."""
+    return _safe_config_path(shared_dir, _MANAGED_CONFIG_FILENAME)
+
+
+def _load_metadata(shared_dir: Path) -> dict:
+    """Load the managed-config sidecar, falling back to an empty payload."""
+    path = _managed_config_path(shared_dir)
+    raw = _read_nofollow(path)
+    if raw is None:
+        return _empty_metadata()
+    try:
+        data = json.loads(raw.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        print(
+            f"Warning [vault-config]: failed to parse managed sidecar {path}: "
+            f"{type(exc).__name__}: {exc}",
+            file=sys.stderr,
+        )
+        return _empty_metadata()
+    if not isinstance(data, dict) or not isinstance(data.get("files"), dict):
+        return _empty_metadata()
+    data["version"] = _MANAGED_CONFIG_VERSION
+    return data
+
+
+def _write_metadata(shared_dir: Path, metadata: dict) -> None:
+    """Persist the managed-config sidecar, removing it when empty."""
+    files = metadata.get("files")
+    path = _managed_config_path(shared_dir)
+    if not files:
+        _delete_nofollow(path)
+        return
+    payload = {"version": _MANAGED_CONFIG_VERSION, "files": files}
+    encoded = json.dumps(payload, indent=2, sort_keys=True).encode("utf-8") + b"\n"
+    _write_nofollow(path, encoded)
+
+
+def _record_managed_patch_values(
+    shared_dir: Path, provider: str, filename: str, records: list[dict]
+) -> None:
+    """Remember which values *provider* owns in *filename*."""
+    metadata = _load_metadata(shared_dir)
+    files = metadata.setdefault("files", {})
+    file_info = files.get(filename)
+    if not isinstance(file_info, dict):
+        file_info = {"providers": {}}
+        files[filename] = file_info
+    providers = file_info.get("providers")
+    if not isinstance(providers, dict):
+        providers = {}
+        file_info["providers"] = providers
+    if records:
+        providers[provider] = records
+    else:
+        providers.pop(provider, None)
+    if not providers:
+        files.pop(filename, None)
+    _write_metadata(shared_dir, metadata)
+
+
+def _remove_managed_patch_values(shared_dir: Path, provider: str) -> None:
+    """Remove sidecar-owned config values for *provider* when still unchanged."""
+    metadata = _load_metadata(shared_dir)
+    files = metadata.setdefault("files", {})
+
+    for filename, file_info in list(files.items()):
+        if not isinstance(file_info, dict):
+            files.pop(filename, None)
+            continue
+        providers = file_info.get("providers")
+        if not isinstance(providers, dict) or provider not in providers:
+            continue
+        records = providers[provider]
+        if isinstance(records, list):
+            config_path = _safe_config_path(shared_dir, filename)
+            if not _remove_records_from_config(config_path, records):
+                continue
+        providers.pop(provider, None)
+        if not providers:
+            files.pop(filename, None)
+
+    _write_metadata(shared_dir, metadata)
+
+
+def _read_toml_mapping(config_path: Path, *, warn_on_error: bool) -> dict | None:
+    """Read TOML as a dict; return ``None`` on parse failure when requested."""
     import tomllib
 
     raw = _read_nofollow(config_path)
-    if raw is not None:
-        try:
-            existing = tomllib.loads(raw.decode("utf-8"))
-        except Exception as exc:
+    if raw is None:
+        return {}
+    try:
+        parsed = tomllib.loads(raw.decode("utf-8"))
+    except Exception as exc:
+        if warn_on_error:
             print(
                 f"Warning [vault-config]: failed to parse {config_path}: "
                 f"{type(exc).__name__}: {exc}",
                 file=sys.stderr,
             )
-            existing = {}
-    else:
-        existing = {}
+            return {}
+        print(
+            f"Warning [vault-config]: cannot remove managed values from {config_path}: "
+            f"{type(exc).__name__}: {exc}",
+            file=sys.stderr,
+        )
+        return None
+    return parsed if isinstance(parsed, dict) else {}
+
+
+def _read_yaml_mapping(config_path: Path, *, warn_on_error: bool) -> dict | None:
+    """Read YAML as a dict; return ``None`` on parse failure when requested."""
+    from ruamel.yaml import YAML
+
+    yaml = YAML()
+    yaml.preserve_quotes = True
+    raw = _read_nofollow(config_path)
+    if raw is None:
+        return {}
+    try:
+        parsed = yaml.load(raw)
+    except Exception as exc:
+        if warn_on_error:
+            print(
+                f"Warning [vault-config]: failed to parse {config_path}: "
+                f"{type(exc).__name__}: {exc}",
+                file=sys.stderr,
+            )
+            return {}
+        print(
+            f"Warning [vault-config]: cannot remove managed values from {config_path}: "
+            f"{type(exc).__name__}: {exc}",
+            file=sys.stderr,
+        )
+        return None
+    return parsed if isinstance(parsed, dict) else {}
+
+
+def _apply_toml_patch(config_path: Path, patch: dict, location: VaultLocation) -> list[dict]:
+    """Patch top-level TOML keys or an array-of-tables entry."""
+    existing = _read_toml_mapping(config_path, warn_on_error=True) or {}
 
     values = {k: _substitute(v, location) for k, v in patch["toml_set"].items()}
     if "toml_table" not in patch:
         existing.update(values)
+        records = [{"kind": "toml_top", "values": values}]
     else:
         table_key = patch["toml_table"]
         match_criteria = patch["toml_match"]
 
         entries = existing.get(table_key, [])
+        if not isinstance(entries, list):
+            entries = []
         target = next(
-            (e for e in entries if all(e.get(k) == v for k, v in match_criteria.items())),
+            (
+                e
+                for e in entries
+                if isinstance(e, dict) and all(e.get(k) == v for k, v in match_criteria.items())
+            ),
             None,
         )
+        created = target is None
         if target:
             target.update(values)
         else:
             entries.append({**match_criteria, **values})
             existing[table_key] = entries
+        records = [
+            {
+                "kind": "toml_table",
+                "table": table_key,
+                "match": match_criteria,
+                "values": values,
+                "created": created,
+            }
+        ]
 
     import tomli_w
 
     _write_nofollow(config_path, tomli_w.dumps(existing).encode("utf-8"))
+    return records
 
 
-def _apply_yaml_patch(config_path: Path, patch: dict, location: VaultLocation) -> None:
+def _apply_yaml_patch(config_path: Path, patch: dict, location: VaultLocation) -> list[dict]:
     """Set top-level keys in a YAML config file."""
     import io
 
@@ -307,25 +505,102 @@ def _apply_yaml_patch(config_path: Path, patch: dict, location: VaultLocation) -
 
     yaml = YAML()
     yaml.preserve_quotes = True
-    raw = _read_nofollow(config_path)
-    if raw is not None:
-        try:
-            existing = yaml.load(raw)
-        except Exception as exc:
-            print(
-                f"Warning [vault-config]: failed to parse {config_path}: "
-                f"{type(exc).__name__}: {exc}",
-                file=sys.stderr,
-            )
-            existing = {}
-    else:
-        existing = {}
-    if not isinstance(existing, dict):
-        existing = {}
+    existing = _read_yaml_mapping(config_path, warn_on_error=True) or {}
 
-    for k, v in patch["yaml_set"].items():
-        existing[k] = _substitute(v, location)
+    values = {k: _substitute(v, location) for k, v in patch["yaml_set"].items()}
+    for k in patch["yaml_set"]:
+        existing[k] = values[k]
 
     buf = io.BytesIO()
     yaml.dump(existing, buf)
     _write_nofollow(config_path, buf.getvalue())
+    return [{"kind": "yaml_top", "values": values}]
+
+
+def _remove_records_from_config(config_path: Path, records: list[dict]) -> bool:
+    """Remove managed records from *config_path* when live values still match."""
+    toml_records = [record for record in records if str(record.get("kind", "")).startswith("toml")]
+    yaml_records = [record for record in records if str(record.get("kind", "")).startswith("yaml")]
+    ok = True
+    if toml_records:
+        ok = _remove_toml_records(config_path, toml_records) and ok
+    if yaml_records:
+        ok = _remove_yaml_records(config_path, yaml_records) and ok
+    return ok
+
+
+def _remove_toml_records(config_path: Path, records: list[dict]) -> bool:
+    """Remove TOML sidecar-owned values if the current values still match."""
+    existing = _read_toml_mapping(config_path, warn_on_error=False)
+    if existing is None:
+        return False
+    changed = False
+
+    for record in records:
+        kind = record.get("kind")
+        if kind == "toml_top":
+            for key, value in dict(record.get("values", {})).items():
+                if existing.get(key) == value:
+                    existing.pop(key, None)
+                    changed = True
+        elif kind == "toml_table":
+            table_key = record.get("table")
+            match = dict(record.get("match", {}))
+            values = dict(record.get("values", {}))
+            entries = existing.get(table_key)
+            if not isinstance(table_key, str) or not isinstance(entries, list):
+                continue
+            target = next(
+                (
+                    entry
+                    for entry in entries
+                    if isinstance(entry, dict)
+                    and all(entry.get(key) == value for key, value in match.items())
+                ),
+                None,
+            )
+            if target is None:
+                continue
+            for key, value in values.items():
+                if target.get(key) == value:
+                    target.pop(key, None)
+                    changed = True
+            if record.get("created") and target == match:
+                entries.remove(target)
+                changed = True
+            if not entries:
+                existing.pop(table_key, None)
+
+    if changed:
+        import tomli_w
+
+        _write_nofollow(config_path, tomli_w.dumps(existing).encode("utf-8"))
+    return True
+
+
+def _remove_yaml_records(config_path: Path, records: list[dict]) -> bool:
+    """Remove YAML sidecar-owned top-level values when unchanged."""
+    import io
+
+    from ruamel.yaml import YAML
+
+    existing = _read_yaml_mapping(config_path, warn_on_error=False)
+    if existing is None:
+        return False
+    changed = False
+
+    for record in records:
+        if record.get("kind") != "yaml_top":
+            continue
+        for key, value in dict(record.get("values", {})).items():
+            if existing.get(key) == value:
+                existing.pop(key, None)
+                changed = True
+
+    if changed:
+        yaml = YAML()
+        yaml.preserve_quotes = True
+        buf = io.BytesIO()
+        yaml.dump(existing, buf)
+        _write_nofollow(config_path, buf.getvalue())
+    return True
