@@ -187,6 +187,18 @@ depends_on = [
     "terok_executor.roster.loader",
 ]
 
+# ── ACP host-proxy (per-task aggregator) ──────────────────────────
+
+# Host-side ACP proxy: aggregates multi-agent containers behind one
+# socket by namespacing the model selector as ``agent:model``.  Sibling
+# of ``container`` (does not consume runner) — so adding ACP can never
+# pull the runner along by accident.
+[[modules]]
+path = "terok_executor.acp"
+depends_on = [
+    "terok_executor.container.build",
+]
+
 # ── Preflight — prerequisite checks ────────────────────────────────
 
 # Pre-launch checks + interactive fixers for `terok-executor run`
@@ -236,6 +248,7 @@ depends_on = [
 [[modules]]
 path = "terok_executor"
 depends_on = [
+    "terok_executor.acp",
     "terok_executor.commands",
     "terok_executor.container.build",
     "terok_executor.container.cache",

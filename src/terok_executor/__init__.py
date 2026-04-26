@@ -28,6 +28,16 @@ except PackageNotFoundError:
 from terok_sandbox import ConfigScope, ConfigStack
 from terok_sandbox.doctor import CheckVerdict, DoctorCheck
 
+# -- ACP host-proxy (per-task multi-agent aggregator) -------------------------
+from .acp import (
+    ACPEndpointStatus,
+    ACPRoster,
+    AgentBindError,
+    AgentRosterCache,
+    ProbeError,
+    list_authenticated_agents,
+)
+
 # -- Commands + CLI surface ----------------------------------------------------
 from .commands import COMMANDS as AGENT_COMMANDS, CommandDef
 
@@ -136,6 +146,13 @@ _bootstrap_roster()
 
 __all__ = [
     "__version__",
+    # ACP host-proxy
+    "ACPEndpointStatus",
+    "ACPRoster",
+    "AgentBindError",
+    "AgentRosterCache",
+    "ProbeError",
+    "list_authenticated_agents",
     # Provider registry
     "AGENT_PROVIDERS",
     "PROVIDER_NAMES",
