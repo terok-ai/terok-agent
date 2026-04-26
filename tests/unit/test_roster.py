@@ -451,6 +451,7 @@ class TestLoadRegistry:
         env = reg.collect_opencode_provider_env()
         assert any(k.startswith("TEROK_OC_BLABLADOR_") for k in env)
         assert any(k.startswith("TEROK_OC_KISSKI_") for k in env)
+        assert any(k.startswith("TEROK_OC_OPENROUTER_") for k in env)
 
 
 # ---------------------------------------------------------------------------
