@@ -34,6 +34,13 @@ def _fake_jwt(payload: dict | None = None) -> str:
     return ".".join((_b64url(header), _b64url(data), "test"))
 
 
+def _jwt_payload(token: str) -> dict:
+    """Decode the unsigned JWT payload used in tests."""
+    _header, payload, _sig = token.split(".", 2)
+    padded = payload + "=" * (-len(payload) % 4)
+    return json.loads(base64.urlsafe_b64decode(padded.encode("ascii")))
+
+
 class TestCaptureCredentials:
     """Verify _capture_credentials stores extracted credentials in the DB."""
 
@@ -171,6 +178,23 @@ class TestWriteClaudeCredentialsFile:
         target = tmp_path / "nested" / "mounts"
         _write_claude_credentials_file({"type": "oauth"}, target)
         assert (target / "_claude-config" / ".credentials.json").is_file()
+
+    def test_replaces_symlink_without_touching_target(self, tmp_path: Path) -> None:
+        """No-follow writes replace a hostile mount symlink instead of following it."""
+        victim = tmp_path / "victim.json"
+        victim.write_text("do not overwrite")
+        cred_dir = tmp_path / "_claude-config"
+        cred_dir.mkdir()
+        dest = cred_dir / ".credentials.json"
+        dest.symlink_to(victim)
+
+        _write_claude_credentials_file({"type": "oauth"}, tmp_path)
+
+        assert victim.read_text() == "do not overwrite"
+        assert not dest.is_symlink()
+        assert json.loads(dest.read_text())["claudeAiOauth"]["accessToken"] == (
+            PHANTOM_CREDENTIALS_MARKER
+        )
 
 
 class TestApplyPostCaptureState:
@@ -520,6 +544,10 @@ class TestCodexOAuthMountWriter:
         tokens = data["tokens"]
         assert tokens["id_token"] != real_id_token
         assert len(tokens["id_token"].split(".")) == 3
+        synthetic_claims = _jwt_payload(tokens["id_token"])
+        assert "email" not in synthetic_claims
+        assert "https://api.openai.com/profile" not in synthetic_claims
+        assert synthetic_claims["https://api.openai.com/auth"]["chatgpt_account_id"] == "org-42"
         assert tokens["account_id"] == "org-42"
         assert tokens["access_token"] == CODEX_SHARED_OAUTH_MARKER
         assert tokens["refresh_token"] == CODEX_SHARED_OAUTH_MARKER
@@ -541,6 +569,27 @@ class TestCodexOAuthMountWriter:
 
         data = json.loads((codex_dir / "auth.json").read_text())
         assert data["tokens"]["access_token"] == CODEX_SHARED_OAUTH_MARKER
+
+    def test_expose_replaces_symlink_without_touching_target(self, tmp_path: Path) -> None:
+        """Exposed copy mode writes through the same no-follow destination helper."""
+        auth_dir = tmp_path / "auth"
+        auth_dir.mkdir()
+        payload = {"tokens": {"access_token": "sk-oai", "refresh_token": "rt"}}
+        (auth_dir / "auth.json").write_text(json.dumps(payload))
+
+        mounts = tmp_path / "mounts"
+        codex_dir = mounts / "_codex-config"
+        codex_dir.mkdir(parents=True)
+        victim = tmp_path / "victim.json"
+        victim.write_text("do not overwrite")
+        dest = codex_dir / "auth.json"
+        dest.symlink_to(victim)
+
+        _codex_oauth_mount_writer(auth_dir, mounts, payload, expose_token=True)
+
+        assert victim.read_text() == "do not overwrite"
+        assert not dest.is_symlink()
+        assert json.loads(dest.read_text()) == payload
 
     def test_expose_raises_when_file_missing(self, tmp_path: Path) -> None:
         """Raises FileNotFoundError when exposed and no auth.json."""

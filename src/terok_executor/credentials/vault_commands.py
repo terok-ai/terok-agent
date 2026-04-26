@@ -66,6 +66,8 @@ def _is_injected_credentials_file(path: Path) -> bool:
 
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(data, dict):
+            return False
         oauth = data.get("claudeAiOauth", {})
         if not isinstance(oauth, dict):
             return False
@@ -84,6 +86,8 @@ def _is_injected_codex_auth_file(path: Path) -> bool:
 
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(data, dict):
+            return False
         tokens = data.get("tokens", {})
         if not isinstance(tokens, dict):
             return False

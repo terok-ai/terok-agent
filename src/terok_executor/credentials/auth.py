@@ -459,7 +459,7 @@ def _claude_oauth_mount_writer(
             raise FileNotFoundError(f"No .credentials.json in {auth_dir}")
         dest_dir = mounts_base / "_claude-config"
         dest_dir.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(src, dest_dir / ".credentials.json")
+        _write_bytes_nofollow(dest_dir / ".credentials.json", src.read_bytes())
         print("Real .credentials.json copied to shared Claude config mount.")
         print(
             "\nNote: Claude OAuth token is EXPOSED in the shared mount."
@@ -502,7 +502,7 @@ def _codex_oauth_mount_writer(
         src = auth_dir / "auth.json"
         if not src.is_file():
             raise FileNotFoundError(f"No auth.json in {auth_dir}")
-        shutil.copy2(src, dest_file)
+        _write_bytes_nofollow(dest_file, src.read_bytes())
         print("Real auth.json copied to shared Codex config mount.")
         print(
             "\nNote: Codex OAuth token is EXPOSED in the shared mount."
@@ -539,11 +539,9 @@ def _write_codex_phantom_auth_json(cred_data: dict, dest: Path) -> None:
     """Write a shared synthetic ``auth.json`` without real bearer tokens.
 
     Codex's ``TokenData`` serde contract (codex-rs/login/src/token_data.rs)
-    requires ``id_token`` to be a parseable JWT string.  Codex reads a
-    small subset of claims from it (plan tier, workspace id, email) but
-    does not verify the signature.  We therefore synthesize a minimal JWT
-    that preserves those non-secret claims while dropping the original
-    opaque token body entirely.
+    requires ``id_token`` to be a parseable JWT string.  We synthesize a
+    minimal JWT that preserves non-PII account metadata while dropping the
+    original opaque token body entirely.
 
     The access/refresh tokens are the actual bearer secrets; both are
     replaced with the Codex-specific shared vault marker.  Inference
@@ -565,7 +563,7 @@ def _write_codex_phantom_auth_json(cred_data: dict, dest: Path) -> None:
         "tokens": tokens,
         "last_refresh": _CODEX_PHANTOM_LAST_REFRESH,
     }
-    dest.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+    _write_bytes_nofollow(dest, (json.dumps(payload, indent=2) + "\n").encode("utf-8"))
 
 
 def _build_codex_shared_id_token(raw_jwt: str) -> str:
@@ -588,18 +586,9 @@ def _build_codex_shared_id_token(raw_jwt: str) -> str:
         return parsed if isinstance(parsed, dict) else {}
 
     payload = _jwt_payload(raw_jwt)
-    profile = payload.get("https://api.openai.com/profile")
     auth = payload.get("https://api.openai.com/auth")
 
-    email = payload.get("email")
-    if not email and isinstance(profile, dict):
-        email = profile.get("email")
-
     safe_payload: dict[str, object] = {"exp": 253402300799}
-    if email:
-        safe_payload["email"] = email
-        safe_payload["https://api.openai.com/profile"] = {"email": email}
-
     if isinstance(auth, dict):
         safe_auth = {
             key: auth[key]
@@ -616,6 +605,29 @@ def _build_codex_shared_id_token(raw_jwt: str) -> str:
             safe_payload["https://api.openai.com/auth"] = safe_auth
 
     return ".".join((_b64url({"alg": "none", "typ": "JWT"}), _b64url(safe_payload), "terok"))
+
+
+def _write_bytes_nofollow(path: Path, data: bytes) -> None:
+    """Atomically write *data* without following a pre-existing target symlink."""
+    import os
+    import uuid
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(f".{path.name}.{uuid.uuid4().hex}.tmp")
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0)
+    try:
+        fd = os.open(tmp, flags, 0o600)
+        with os.fdopen(fd, "wb") as f:
+            f.write(data)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp, path)
+    except Exception:
+        try:
+            tmp.unlink()
+        except FileNotFoundError:
+            pass
+        raise
 
 
 #: Maps provider name → post-capture mount reconciler.  OAuth-capable
@@ -654,8 +666,9 @@ def _write_claude_credentials_file(cred_data: dict, mounts_base: Path) -> None:
             "rateLimitTier": cred_data.get("rate_limit_tier"),
         }
     }
-    (claude_dir / ".credentials.json").write_text(
-        json.dumps(creds, indent=2) + "\n", encoding="utf-8"
+    _write_bytes_nofollow(
+        claude_dir / ".credentials.json",
+        (json.dumps(creds, indent=2) + "\n").encode("utf-8"),
     )
 
 
@@ -701,7 +714,7 @@ def _apply_post_capture_state(
             continue  # already up to date
 
         state.update(patch)
-        path.write_text(json.dumps(state, indent=2) + "\n", encoding="utf-8")
+        _write_bytes_nofollow(path, (json.dumps(state, indent=2) + "\n").encode("utf-8"))
 
 
 def _api_key_command(cfg: AuthKeyConfig) -> list[str]:

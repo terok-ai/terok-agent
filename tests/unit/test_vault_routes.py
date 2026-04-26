@@ -504,6 +504,21 @@ class TestScanSkipsInjectedFile:
 
         assert scan_leaked_credentials(tmp_path) == []
 
+    def test_malformed_codex_auth_json_is_suspicious_not_crashing(self, tmp_path: Path) -> None:
+        """Non-object auth.json roots are treated as leaks, not parser crashes."""
+        from terok_executor import get_roster
+        from terok_executor.credentials.vault_commands import scan_leaked_credentials
+
+        roster = get_roster()
+        auth = roster.auth_providers["codex"]
+        route = roster.vault_routes["codex"]
+
+        cred_dir = tmp_path / auth.host_dir_name
+        cred_dir.mkdir()
+        (cred_dir / route.credential_file).write_text(json.dumps(["not", "an", "object"]))
+
+        assert scan_leaked_credentials(tmp_path) == [("codex", cred_dir / route.credential_file)]
+
 
 class TestCleanSkipsInjectedFile:
     """Verify the clean handler preserves injected .credentials.json."""
@@ -660,6 +675,23 @@ class TestToVaultRoute:
 
         assert _to_vault_route("test", {}) is None
         assert _to_vault_route("test", {"vault": {}}) is None
+
+    @pytest.mark.parametrize("field", ["path_upstreams", "oauth_extra_headers"])
+    def test_optional_vault_maps_reject_falsy_non_mappings(self, field: str) -> None:
+        """Falsy lists/strings must not be silently treated as absent maps."""
+        from terok_executor.roster.loader import _to_vault_route
+
+        with pytest.raises(ValueError, match=f"{field} must be a mapping"):
+            _to_vault_route(
+                "test",
+                {
+                    "vault": {
+                        "route_prefix": "test",
+                        "upstream": "https://example.com",
+                        field: [],
+                    }
+                },
+            )
 
 
 class TestEnsureVaultRoutes:

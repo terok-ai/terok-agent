@@ -858,17 +858,27 @@ def _to_vault_route(name: str, data: dict) -> VaultRoute | None:
             f"Agent {name!r}: 'socket_path' is no longer configurable — "
             "remove it; the env builder resolves the vault socket path centrally"
         )
-    path_upstreams = cp.get("path_upstreams") or {}
-    if not isinstance(path_upstreams, dict):
+    raw_path_upstreams = cp.get("path_upstreams")
+    if raw_path_upstreams is None:
+        path_upstreams = {}
+    elif not isinstance(raw_path_upstreams, dict):
         raise ValueError(
-            f"Agent {name!r}: path_upstreams must be a mapping, got {type(path_upstreams).__name__}"
+            f"Agent {name!r}: path_upstreams must be a mapping, "
+            f"got {type(raw_path_upstreams).__name__}"
         )
-    oauth_extra_headers = cp.get("oauth_extra_headers") or {}
-    if not isinstance(oauth_extra_headers, dict):
+    else:
+        path_upstreams = raw_path_upstreams
+
+    raw_oauth_extra_headers = cp.get("oauth_extra_headers")
+    if raw_oauth_extra_headers is None:
+        oauth_extra_headers = {}
+    elif not isinstance(raw_oauth_extra_headers, dict):
         raise ValueError(
             f"Agent {name!r}: oauth_extra_headers must be a mapping, "
-            f"got {type(oauth_extra_headers).__name__}"
+            f"got {type(raw_oauth_extra_headers).__name__}"
         )
+    else:
+        oauth_extra_headers = raw_oauth_extra_headers
     return VaultRoute(
         provider=name,
         route_prefix=cp["route_prefix"],
