@@ -119,6 +119,7 @@ class ACPProxy:
         self._bound_agent: str | None = None
         self._client_session_id: str | None = None
         self._backend_session_id: str | None = None
+        self._client_session_new_params: dict[str, Any] = {}
         self._backend_writer: asyncio.StreamWriter | None = None
         self._backend_reader: asyncio.StreamReader | None = None
         self._backend_pump_task: asyncio.Task | None = None
@@ -214,6 +215,13 @@ class ACPProxy:
                 message="proxy supports one session per connection (v1)",
             )
             return
+
+        # Capture the client's params (cwd, mcpServers, …) so the
+        # backend's session/new at bind time receives the same context
+        # the client asked for, not a hard-coded default.
+        client_params = frame.get("params")
+        if isinstance(client_params, dict):
+            self._client_session_new_params = dict(client_params)
 
         self._client_session_id = "proxy-1"
         models = await self._roster.list_available_agents()
@@ -394,9 +402,17 @@ class ACPProxy:
             {"protocolVersion": ACP_PROTOCOL_VERSION, "clientCapabilities": {}},
         )
 
+        # Replay the client's original ``session/new`` params so the
+        # backend's session context matches what the client asked for.
+        # Falls back to a safe default for synthetic test clients that
+        # never sent params.
+        backend_session_new_params = self._client_session_new_params or {
+            "cwd": "/workspace",
+            "mcpServers": [],
+        }
         new_resp = await self._proxy_request(
             "session/new",
-            {"cwd": "/workspace", "mcpServers": []},
+            backend_session_new_params,
         )
         backend_session_id = ((new_resp or {}).get("result") or {}).get("sessionId")
         if not isinstance(backend_session_id, str):
@@ -432,7 +448,6 @@ class ACPProxy:
         ``agent:model`` ids it expects).  Exits cleanly on EOF.
         """
         assert self._backend_reader is not None
-        agent = self._bound_agent
         while True:
             try:
                 line = await self._backend_reader.readline()
@@ -453,8 +468,11 @@ class ACPProxy:
                 self._deliver_proxy_response(frame_id, frame)
                 continue
 
-            if agent is not None:
-                _rewrite_model_options_in_place(frame, agent)
+            # Read ``_bound_agent`` at point of use — the pump task
+            # starts in ``_spawn_backend`` *before* bind completes, so
+            # snapshotting at loop entry would miss the assignment.
+            if self._bound_agent is not None:
+                _rewrite_model_options_in_place(frame, self._bound_agent)
             self._translate_session_id_outbound(frame)
             await self._send_to_client(frame)
 
@@ -632,11 +650,19 @@ def _rewrite_model_options_in_place(frame: dict[str, Any], bound_agent: str) -> 
 
     Backends emit bare model ids (``opus-4.6``); clients expect
     namespaced ids (``claude:opus-4.6``).  After bind, only the bound
-    agent's models should appear; the proxy adds the prefix here.
+    agent's models should appear; the proxy adds the prefix here, and
+    namespaces ``currentValue`` too so the client's view of the
+    selected model stays consistent with the choices it sees.
     """
     result = frame.get("result")
     if not isinstance(result, dict):
         return
+    for opt in result.get("configOptions") or []:
+        if not isinstance(opt, dict) or opt.get("category") != MODEL_OPTION_CATEGORY:
+            continue
+        current = opt.get("currentValue")
+        if isinstance(current, str) and MODEL_NAMESPACE_SEP not in current:
+            opt["currentValue"] = f"{bound_agent}{MODEL_NAMESPACE_SEP}{current}"
     for entry in iter_model_choice_dicts(result):
         ident = entry.get("id") or entry.get("value")
         if not isinstance(ident, str) or MODEL_NAMESPACE_SEP in ident:

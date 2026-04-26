@@ -171,11 +171,17 @@ async def _drive_handshake(
         writer.write((json.dumps(payload) + "\n").encode("utf-8"))
         await writer.drain()
 
-    async def _read_frame() -> dict:
+    async def _read_frame() -> dict[str, Any]:
         line = await reader.readline()
         if not line:
             raise ProbeError(f"agent {agent_id!r} closed stdout before handshake completed")
-        return json.loads(line)
+        try:
+            frame = json.loads(line)
+        except json.JSONDecodeError as exc:
+            raise ProbeError(f"agent {agent_id!r} sent malformed JSON during probe") from exc
+        if not isinstance(frame, dict):
+            raise ProbeError(f"agent {agent_id!r} sent a non-object JSON-RPC frame")
+        return frame
 
     # initialize ---------------------------------------------------------
     # Probe ids are local to this short-lived handshake — no shared id
