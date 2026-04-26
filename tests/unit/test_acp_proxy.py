@@ -36,7 +36,7 @@ class _StubRoster:
     def __init__(self, available: list[str]) -> None:
         self._available = available
 
-    def list_available_agents(self) -> list[str]:
+    async def list_available_agents(self) -> list[str]:
         """Return the canned ``agent:model`` list."""
         return list(self._available)
 

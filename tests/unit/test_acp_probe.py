@@ -54,21 +54,11 @@ class TestExtractModelIds:
         }
         assert _extract_model_ids(result) == ("opus-4.6", "haiku-4.5")
 
-    def test_legacy_available_models_array(self) -> None:
-        """Legacy shape: top-level ``availableModels`` of strings."""
-        result = {"availableModels": ["opus-4.6", "haiku-4.5"]}
-        assert _extract_model_ids(result) == ("opus-4.6", "haiku-4.5")
-
-    def test_legacy_available_models_dicts(self) -> None:
-        """Legacy shape: top-level ``availableModels`` of dicts."""
-        result = {"availableModels": [{"id": "opus-4.6"}]}
-        assert _extract_model_ids(result) == ("opus-4.6",)
-
-    def test_string_choices(self) -> None:
-        """Choices may be plain strings."""
+    def test_top_level_options_with_id_keys(self) -> None:
+        """Some agents emit choices directly under the option (no ``select``)."""
         result = {
             "configOptions": [
-                {"category": "model", "options": ["m1", "m2"]},
+                {"category": "model", "options": [{"id": "m1"}, {"id": "m2"}]},
             ]
         }
         assert _extract_model_ids(result) == ("m1", "m2")
@@ -93,24 +83,14 @@ class TestProbeAgentModels:
     def test_happy_path_returns_models(self) -> None:
         """A normal handshake yields the model tuple from configOptions."""
         rt = NullRuntime()
-        # The probe's request-id strings are stable: px-init then
-        # px-session-new.  We script responses matching those ids.
-        # Easier: register a callback-less script that echoes prepared responses
-        # by writing the responses on each probe write.  But NullRuntime's
-        # script model is read/write steps in order; we have to consume the
-        # request frame *some* way.  Approach: we know the probe writes one
-        # initialize then one session/new.  We use a script that reads the
-        # whole initialize frame (any bytes), writes the response, then the
-        # whole session/new frame, writes the response.
-
         init_response = _frame(
             "",
-            id="px-init",
+            id=1,
             result={"protocolVersion": 1, "agentCapabilities": {}, "authMethods": []},
         )
         new_response = _frame(
             "",
-            id="px-session-new",
+            id=2,
             result={
                 "sessionId": "be-1",
                 "configOptions": [
@@ -122,23 +102,16 @@ class TestProbeAgentModels:
                 "availableModes": [],
             },
         )
-
-        # The probe writes one frame, waits for the response, then writes
-        # another, and waits again.  Use a script that drains stdin
-        # entirely between writes.  We approximate by reading large
-        # opaque chunks and writing the response.
-
         rt.set_exec_stdio_script(
             "task-c",
             ("terok-claude-acp",),
             (
-                # Match exactly what the probe writes for initialize.
                 (
                     "read",
                     json.dumps(
                         {
                             "jsonrpc": "2.0",
-                            "id": "px-init",
+                            "id": 1,
                             "method": "initialize",
                             "params": {"protocolVersion": 1, "clientCapabilities": {}},
                         }
@@ -151,7 +124,7 @@ class TestProbeAgentModels:
                     json.dumps(
                         {
                             "jsonrpc": "2.0",
-                            "id": "px-session-new",
+                            "id": 2,
                             "method": "session/new",
                             "params": {"cwd": "/workspace", "mcpServers": []},
                         }
@@ -184,14 +157,14 @@ class TestProbeAgentModels:
                     json.dumps(
                         {
                             "jsonrpc": "2.0",
-                            "id": "px-init",
+                            "id": 1,
                             "method": "initialize",
                             "params": {"protocolVersion": 1, "clientCapabilities": {}},
                         }
                     ).encode()
                     + b"\n",
                 ),
-                ("write", _frame("", id="px-init", error={"code": -1, "message": "nope"})),
+                ("write", _frame("", id=1, error={"code": -1, "message": "nope"})),
             ),
         )
         sandbox = Sandbox(config=SandboxConfig(), runtime=rt)

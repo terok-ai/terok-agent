@@ -37,6 +37,7 @@ import asyncio
 import json
 import logging
 import os
+from collections.abc import Iterator
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
@@ -60,6 +61,40 @@ PROXY_REQUEST_ID_PREFIX = "px-"
 """Prefix for JSON-RPC request ids the proxy injects (replay of
 ``initialize``/``session/new`` to the backend).  Strings can't collide
 with the int ids ACP clients typically use."""
+
+JSONRPC_INVALID_REQUEST = -32600
+JSONRPC_INVALID_PARAMS = -32602
+JSONRPC_INTERNAL_ERROR = -32603
+
+
+def iter_model_choice_dicts(result: dict[str, Any]) -> Iterator[dict[str, Any]]:
+    """Yield each dict-shaped choice from ``result.configOptions[category=model]``.
+
+    Tolerant of the in-flight ACP schema variants we observed during
+    design — the model selector can nest its choices under ``select``
+    or directly, and use ``options``/``values``/``choices`` as the
+    container key.  Skips non-dict entries; consumers that need to
+    mutate in place can rely on dict-only semantics.
+
+    Shared by :func:`_extract_model_ids` (probe.py, read-only) and
+    :func:`_rewrite_model_options_in_place` (proxy.py, mutating) so the
+    schema-tolerance logic lives in one place.
+    """
+    options = result.get("configOptions") or []
+    for opt in options:
+        if not isinstance(opt, dict) or opt.get("category") != MODEL_OPTION_CATEGORY:
+            continue
+        select = opt.get("select")
+        nested = select if isinstance(select, dict) else opt
+        if not isinstance(nested, dict):
+            continue
+        for key in ("options", "values", "choices"):
+            choices = nested.get(key)
+            if not isinstance(choices, list):
+                continue
+            for entry in choices:
+                if isinstance(entry, dict):
+                    yield entry
 
 
 class AgentBindError(RuntimeError):
@@ -88,8 +123,8 @@ class ACPProxy:
         self._backend_reader: asyncio.StreamReader | None = None
         self._backend_pump_task: asyncio.Task | None = None
         self._backend_exec_future: asyncio.Future | None = None
-        self._backend_pipe_fds: tuple[int, int, int, int] | None = None
         self._proxy_request_counter = 0
+        self._pending_proxy_responses: dict[str, asyncio.Future] = {}
         self._closed = False
 
     async def run(
@@ -175,13 +210,13 @@ class ACPProxy:
         if self._client_session_id is not None:
             await self._reply_error(
                 frame.get("id"),
-                code=-32600,
+                code=JSONRPC_INVALID_REQUEST,
                 message="proxy supports one session per connection (v1)",
             )
             return
 
         self._client_session_id = "proxy-1"
-        models = self._roster.list_available_agents()
+        models = await self._roster.list_available_agents()
         await self._send_to_client(
             {
                 "jsonrpc": "2.0",
@@ -207,7 +242,7 @@ class ACPProxy:
             else:
                 await self._reply_error(
                     frame.get("id"),
-                    code=-32600,
+                    code=JSONRPC_INVALID_REQUEST,
                     message="set_config_option pre-bind: only model selection is allowed",
                 )
             return
@@ -216,7 +251,7 @@ class ACPProxy:
         if not agent_id or not model_id:
             await self._reply_error(
                 frame.get("id"),
-                code=-32602,
+                code=JSONRPC_INVALID_PARAMS,
                 message=f"model id must be 'agent:model', got {value!r}",
             )
             return
@@ -226,7 +261,7 @@ class ACPProxy:
         elif agent_id != self._bound_agent:
             await self._reply_error(
                 frame.get("id"),
-                code=-32602,
+                code=JSONRPC_INVALID_PARAMS,
                 message=(
                     f"session is already bound to agent {self._bound_agent!r}; "
                     f"v1 does not support cross-agent switches"
@@ -244,7 +279,7 @@ class ACPProxy:
         if not self._is_bound:
             await self._reply_error(
                 frame.get("id"),
-                code=-32600,
+                code=JSONRPC_INVALID_REQUEST,
                 message=(
                     "no agent bound — pick a model via "
                     "session/set_config_option before issuing this method"
@@ -276,7 +311,7 @@ class ACPProxy:
             await self._teardown_backend()
             await self._reply_error(
                 client_frame.get("id"),
-                code=-32603,
+                code=JSONRPC_INTERNAL_ERROR,
                 message=f"failed to bind agent {agent_id!r}: {exc}",
             )
             return
@@ -285,7 +320,7 @@ class ACPProxy:
         # Build the post-bind option list: namespaced ids, but only for
         # the bound agent's models so the client can no longer see
         # cross-agent options.
-        bound_models = self._roster.list_available_agents()
+        bound_models = await self._roster.list_available_agents()
         collapsed = [m for m in bound_models if m.startswith(f"{agent_id}{MODEL_NAMESPACE_SEP}")]
         await self._send_to_client(
             {
@@ -315,12 +350,6 @@ class ACPProxy:
 
         host_to_child_r, host_to_child_w = os.pipe()
         child_to_host_r, child_to_host_w = os.pipe()
-        self._backend_pipe_fds = (
-            host_to_child_r,
-            host_to_child_w,
-            child_to_host_r,
-            child_to_host_w,
-        )
 
         # Wrap the host-side ends as asyncio streams BEFORE handing the
         # other ends to the executor — connect_*_pipe attaches readers
@@ -340,23 +369,15 @@ class ACPProxy:
         )
         self._backend_reader = reader
 
-        # Hand the *other* ends to the runtime.  The wrapper script lives
-        # on the container's ``$PATH`` (staged at L1 build time).
-        wrapper = [f"terok-{agent_id}-acp"]
-        sandbox = self._roster.sandbox
-        container = sandbox.runtime.container(self._roster.container_name)
+        # Hand the *other* ends to the runtime via the roster's
+        # ``exec_wrapper`` — keeps the sandbox + container details
+        # behind the roster's public API instead of leaking them here.
         child_in = os.fdopen(host_to_child_r, "rb", buffering=0)
         child_out = os.fdopen(child_to_host_w, "wb", buffering=0)
-
-        def _run() -> int:
-            return sandbox.runtime.exec_stdio(
-                container,
-                wrapper,
-                stdin=child_in,
-                stdout=child_out,
-            )
-
-        self._backend_exec_future = loop.run_in_executor(None, _run)
+        self._backend_exec_future = loop.run_in_executor(
+            None,
+            lambda: self._roster.exec_wrapper(agent_id, stdin=child_in, stdout=child_out),
+        )
 
         # Start the backend → client pump.
         self._backend_pump_task = loop.create_task(self._backend_pump_loop())
@@ -368,49 +389,28 @@ class ACPProxy:
         can be re-targeted on forwarding.  Errors propagate as
         :class:`AgentBindError`.
         """
-        # initialize ---------------------------------------------------
-        await self._send_to_backend(
-            {
-                "jsonrpc": "2.0",
-                "id": self._next_proxy_id(),
-                "method": "initialize",
-                "params": {
-                    "protocolVersion": ACP_PROTOCOL_VERSION,
-                    "clientCapabilities": {},
-                },
-            }
+        await self._proxy_request(
+            "initialize",
+            {"protocolVersion": ACP_PROTOCOL_VERSION, "clientCapabilities": {}},
         )
-        await self._await_proxy_response("initialize")
 
-        # session/new --------------------------------------------------
-        await self._send_to_backend(
-            {
-                "jsonrpc": "2.0",
-                "id": self._next_proxy_id(),
-                "method": "session/new",
-                "params": {"cwd": "/workspace", "mcpServers": []},
-            }
+        new_resp = await self._proxy_request(
+            "session/new",
+            {"cwd": "/workspace", "mcpServers": []},
         )
-        new_resp = await self._await_proxy_response("session/new")
         backend_session_id = ((new_resp or {}).get("result") or {}).get("sessionId")
         if not isinstance(backend_session_id, str):
             raise AgentBindError("backend session/new returned no sessionId")
         self._backend_session_id = backend_session_id
 
-        # session/set_config_option (model) ---------------------------
-        await self._send_to_backend(
+        await self._proxy_request(
+            "session/set_config_option",
             {
-                "jsonrpc": "2.0",
-                "id": self._next_proxy_id(),
-                "method": "session/set_config_option",
-                "params": {
-                    "sessionId": backend_session_id,
-                    "category": MODEL_OPTION_CATEGORY,
-                    "value": model_id,
-                },
-            }
+                "sessionId": backend_session_id,
+                "category": MODEL_OPTION_CATEGORY,
+                "value": model_id,
+            },
         )
-        await self._await_proxy_response("session/set_config_option")
 
     # ── Forwarding ────────────────────────────────────────────────────
 
@@ -488,39 +488,48 @@ class ACPProxy:
 
     # ── Proxy-originated request bookkeeping ─────────────────────────
 
-    _pending_proxy_responses: dict[str, asyncio.Future]
+    async def _proxy_request(
+        self,
+        method: str,
+        params: dict[str, Any],
+        *,
+        timeout: float = 15.0,
+    ) -> dict[str, Any]:
+        """Send a proxy-originated request to the backend and await its response.
 
-    def _next_proxy_id(self) -> str:
-        """Return the next id to use for a proxy-originated request."""
-        self._proxy_request_counter += 1
-        return f"{PROXY_REQUEST_ID_PREFIX}{self._proxy_request_counter}"
+        Each call gets a fresh ``px-N`` id and parks an ``asyncio.Future``
+        in :attr:`_pending_proxy_responses` keyed by *that* id — so the
+        backend's responses correlate by id, not by send-order, and
+        out-of-order replies (legal in JSON-RPC 2.0) resolve the right
+        future.
 
-    async def _await_proxy_response(self, label: str) -> dict[str, Any]:
-        """Block until the next ``proxy:`` reply arrives from the backend.
-
-        v1 simplification: we send proxy-originated requests one at a
-        time during bind, so we can use a single pending-future slot
-        rather than a full id→future map.  Future revisions that want
-        concurrent proxy requests (e.g. probing while a session is in
-        flight) should switch to a dict keyed by id.
+        Errors come back as :class:`AgentBindError`: timeouts, JSON-RPC
+        ``error`` payloads, or backend disconnect during the wait.
         """
-        if not hasattr(self, "_pending_proxy_responses"):
-            self._pending_proxy_responses = {}
+        self._proxy_request_counter += 1
+        frame_id = f"{PROXY_REQUEST_ID_PREFIX}{self._proxy_request_counter}"
         future: asyncio.Future = asyncio.get_running_loop().create_future()
-        # Park the future under the most recently emitted id.
-        last_id = f"{PROXY_REQUEST_ID_PREFIX}{self._proxy_request_counter}"
-        self._pending_proxy_responses[last_id] = future
+        self._pending_proxy_responses[frame_id] = future
         try:
-            response = await asyncio.wait_for(future, timeout=15.0)
+            await self._send_to_backend(
+                {"jsonrpc": "2.0", "id": frame_id, "method": method, "params": params}
+            )
+            response = await asyncio.wait_for(future, timeout=timeout)
         except TimeoutError as exc:
-            raise AgentBindError(f"backend did not respond to proxy {label!r} within 15s") from exc
+            self._pending_proxy_responses.pop(frame_id, None)
+            raise AgentBindError(
+                f"backend did not respond to proxy {method!r} within {timeout}s"
+            ) from exc
+        except Exception:
+            self._pending_proxy_responses.pop(frame_id, None)
+            raise
         if "error" in response:
-            raise AgentBindError(f"backend rejected proxy {label!r}: {response['error']}")
+            raise AgentBindError(f"backend rejected proxy {method!r}: {response['error']}")
         return response
 
     def _deliver_proxy_response(self, frame_id: str, frame: dict[str, Any]) -> None:
         """Resolve the future awaiting the response with id *frame_id*."""
-        pending = getattr(self, "_pending_proxy_responses", {}).pop(frame_id, None)
+        pending = self._pending_proxy_responses.pop(frame_id, None)
         if pending is not None and not pending.done():
             pending.set_result(frame)
 
@@ -546,6 +555,12 @@ class ACPProxy:
     async def _teardown_backend(self) -> None:
         """Close pipes, cancel the pump, wait for the exec to drain."""
         self._closed = True
+        # Cancel any still-pending proxy requests so awaiters unblock
+        # cleanly rather than hanging until their wait_for timeout.
+        for future in self._pending_proxy_responses.values():
+            if not future.done():
+                future.cancel()
+        self._pending_proxy_responses.clear()
         if self._backend_writer is not None:
             try:
                 self._backend_writer.close()
@@ -563,7 +578,7 @@ class ACPProxy:
         if self._backend_exec_future is not None:
             try:
                 await asyncio.wait_for(self._backend_exec_future, timeout=2.0)
-            except (TimeoutError, Exception) as exc:  # noqa: BLE001
+            except Exception as exc:  # noqa: BLE001
                 _logger.debug("ACP proxy: backend exec drain: %s", exc)
             self._backend_exec_future = None
 
@@ -622,25 +637,12 @@ def _rewrite_model_options_in_place(frame: dict[str, Any], bound_agent: str) -> 
     result = frame.get("result")
     if not isinstance(result, dict):
         return
-    options = result.get("configOptions")
-    if not isinstance(options, list):
-        return
-    for opt in options:
-        if not isinstance(opt, dict) or opt.get("category") != MODEL_OPTION_CATEGORY:
+    for entry in iter_model_choice_dicts(result):
+        ident = entry.get("id") or entry.get("value")
+        if not isinstance(ident, str) or MODEL_NAMESPACE_SEP in ident:
             continue
-        select = opt.get("select")
-        if not isinstance(select, dict):
-            continue
-        for key in ("options", "values", "choices"):
-            entries = select.get(key)
-            if not isinstance(entries, list):
-                continue
-            for entry in entries:
-                if isinstance(entry, dict):
-                    ident = entry.get("id") or entry.get("value")
-                    if isinstance(ident, str) and MODEL_NAMESPACE_SEP not in ident:
-                        prefixed = f"{bound_agent}{MODEL_NAMESPACE_SEP}{ident}"
-                        if "id" in entry:
-                            entry["id"] = prefixed
-                        if "value" in entry:
-                            entry["value"] = prefixed
+        prefixed = f"{bound_agent}{MODEL_NAMESPACE_SEP}{ident}"
+        if "id" in entry:
+            entry["id"] = prefixed
+        if "value" in entry:
+            entry["value"] = prefixed

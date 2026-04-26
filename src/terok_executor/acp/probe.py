@@ -31,6 +31,8 @@ import logging
 import os
 from typing import TYPE_CHECKING, Any
 
+from .proxy import iter_model_choice_dicts
+
 if TYPE_CHECKING:
     from terok_sandbox import Sandbox
 
@@ -147,7 +149,7 @@ async def probe_agent_models(
         # caller-visible latency is bounded.
         try:
             await asyncio.wait_for(exec_future, timeout=2.0)
-        except (TimeoutError, Exception) as exc:  # noqa: BLE001
+        except Exception as exc:  # noqa: BLE001
             _logger.debug("ACP probe exec_future cleanup: %s", exc)
 
 
@@ -176,10 +178,12 @@ async def _drive_handshake(
         return json.loads(line)
 
     # initialize ---------------------------------------------------------
+    # Probe ids are local to this short-lived handshake — no shared id
+    # space with the proxy, so plain integers are fine.
     await _write_frame(
         {
             "jsonrpc": "2.0",
-            "id": "px-init",
+            "id": 1,
             "method": "initialize",
             "params": {
                 "protocolVersion": ACP_PROTOCOL_VERSION,
@@ -195,7 +199,7 @@ async def _drive_handshake(
     await _write_frame(
         {
             "jsonrpc": "2.0",
-            "id": "px-session-new",
+            "id": 2,
             "method": "session/new",
             "params": {"cwd": cwd, "mcpServers": []},
         }
@@ -210,52 +214,15 @@ async def _drive_handshake(
 def _extract_model_ids(session_new_result: dict) -> tuple[str, ...]:
     """Return the model ids from a ``session/new`` response.
 
-    Tolerates both currently-known shapes for the ACP model selector:
-    a top-level ``availableModels`` array (older drafts) and a
-    ``configOptions[*]`` entry with ``category == "model"`` (current
-    draft).  Unknown shapes yield an empty tuple — callers cache that
-    and skip the agent.
+    Walks the ``configOptions[category=model]`` entry via the shared
+    :func:`iter_model_choice_dicts` iterator (so the schema-tolerance
+    logic lives in one place — see :mod:`.proxy`).  Unknown shapes
+    yield an empty tuple, which the caller caches to avoid hammering
+    a misbehaving agent on every session.
     """
-    # Newer "configOptions" shape
-    options = session_new_result.get("configOptions") or []
-    for opt in options:
-        if not isinstance(opt, dict):
-            continue
-        if opt.get("category") != "model":
-            continue
-        # Try several reasonable nestings — ACP's exact schema is still
-        # in flux; we want to keep working as it stabilises.
-        models: list[str] = []
-        for choices_key in ("options", "values", "choices"):
-            choices = (
-                (opt.get("select") or {}).get(choices_key)
-                if "select" in opt
-                else opt.get(choices_key)
-            )
-            if isinstance(choices, list):
-                for entry in choices:
-                    if isinstance(entry, str):
-                        models.append(entry)
-                    elif isinstance(entry, dict):
-                        ident = entry.get("id") or entry.get("value")
-                        if isinstance(ident, str):
-                            models.append(ident)
-                if models:
-                    return tuple(models)
-
-    # Legacy "availableModels" shape (older drafts; keep for a release
-    # or two until we're sure no agent emits it).
-    legacy = session_new_result.get("availableModels") or []
-    if isinstance(legacy, list):
-        out: list[str] = []
-        for entry in legacy:
-            if isinstance(entry, str):
-                out.append(entry)
-            elif isinstance(entry, dict):
-                ident = entry.get("id") or entry.get("value")
-                if isinstance(ident, str):
-                    out.append(ident)
-        if out:
-            return tuple(out)
-
-    return ()
+    out: list[str] = []
+    for entry in iter_model_choice_dicts(session_new_result):
+        ident = entry.get("id") or entry.get("value")
+        if isinstance(ident, str):
+            out.append(ident)
+    return tuple(out)

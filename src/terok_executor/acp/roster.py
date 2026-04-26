@@ -22,8 +22,10 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from collections.abc import Callable
 from dataclasses import dataclass
 from enum import StrEnum
+from functools import cached_property
 from typing import TYPE_CHECKING
 
 from .cache import GLOBAL_CACHE, AgentRosterCache, CacheKey
@@ -106,6 +108,15 @@ def list_authenticated_agents(
         db.close()
 
 
+def _default_auth_source(scope: str) -> list[str]:
+    """The default ``auth_source`` :class:`ACPRoster` uses — wraps the DB.
+
+    A free function so tests can inject any ``Callable[[str], list[str]]``
+    via the constructor without monkey-patching this module.
+    """
+    return list_authenticated_agents(scope=scope)
+
+
 class ACPRoster:
     """Per-task ACP aggregator.
 
@@ -128,6 +139,7 @@ class ACPRoster:
         auth_identity: str = DEFAULT_AUTH_IDENTITY,
         credential_scope: str = DEFAULT_CREDENTIAL_SCOPE,
         cache: AgentRosterCache | None = None,
+        auth_source: Callable[[str], list[str]] | None = None,
     ) -> None:
         self._task_id = task_id
         self._container_name = container_name
@@ -135,12 +147,15 @@ class ACPRoster:
         self._sandbox = sandbox
         self._auth_identity = auth_identity
         self._credential_scope = credential_scope
-        self._cache = cache or GLOBAL_CACHE
-        self._configured_agents_cache: tuple[str, ...] | None = None
+        # Don't ``cache or GLOBAL_CACHE`` here — ``AgentRosterCache`` defines
+        # ``__len__``, so an empty cache is falsy and would silently swap in
+        # the global singleton.  Explicit ``is None`` check.
+        self._cache = cache if cache is not None else GLOBAL_CACHE
+        self._auth_source: Callable[[str], list[str]] = auth_source or _default_auth_source
 
     # ── Lazy-init properties (mirrors AgentRunner) ─────────────────────
 
-    @property
+    @cached_property
     def configured_agents(self) -> tuple[str, ...]:
         """Agents declared in the image's ``ai.terok.agents`` label.
 
@@ -148,15 +163,11 @@ class ACPRoster:
         the lifetime of the running task.  The label format is a comma-
         separated list (see ``terok_executor.container.build:63``).
         """
-        if self._configured_agents_cache is None:
-            from terok_executor.container.build import AGENTS_LABEL
+        from terok_executor.container.build import AGENTS_LABEL
 
-            image = self._sandbox.runtime.image(self._image_id)
-            raw = image.labels().get(AGENTS_LABEL, "")
-            self._configured_agents_cache = tuple(
-                token for token in (s.strip() for s in raw.split(",")) if token
-            )
-        return self._configured_agents_cache
+        image = self._sandbox.runtime.image(self._image_id)
+        raw = image.labels().get(AGENTS_LABEL, "")
+        return tuple(token for token in (s.strip() for s in raw.split(",")) if token)
 
     # ── Public surface ────────────────────────────────────────────────
 
@@ -167,33 +178,32 @@ class ACPRoster:
         every call so newly-authed agents are reflected immediately.
         """
         configured = self.configured_agents
-        authed = frozenset(list_authenticated_agents(scope=self._credential_scope)).intersection(
-            configured
-        )
+        authed = frozenset(self._auth_source(self._credential_scope)).intersection(configured)
         return _AgentMatrix(configured=configured, authenticated=authed)
 
-    def list_available_agents(self) -> list[str]:
+    async def list_available_agents(self) -> list[str]:
         """Return ``agent:model`` ids ready to surface to a client.
 
-        Walks the configured agents, intersects with current auth, and
-        emits namespaced ids drawing models from the cache.  Cache misses
-        trigger a one-shot probe via :meth:`warm`.  Probe failures cache
-        an empty roster (so we don't hammer a misconfigured agent every
-        ``session/new``) and the agent is silently skipped.
+        Walks configured agents, intersects with current auth, draws
+        models from the cache.  Cold-cache agents are probed in
+        parallel via :func:`asyncio.gather`, so first-call latency is
+        ``max(probe_time)`` rather than ``sum(probe_time)``.  Probe
+        failures cache an empty roster (so we don't hammer a
+        misconfigured agent every ``session/new``) and the agent is
+        silently skipped.
         """
         matrix = self.agent_matrix()
+        agents_in_order = [a for a in matrix.configured if a in matrix.authenticated]
+        cold = [a for a in agents_in_order if self._cache.get(self._cache_key(a)) is None]
+        if cold:
+            await asyncio.gather(*(self.warm(a) for a in cold))
         out: list[str] = []
-        for agent in matrix.configured:
-            if agent not in matrix.authenticated:
-                continue
-            models = self._cache.get(self._cache_key(agent))
-            if models is None:
-                models = self.warm(agent)
-            for model in models:
+        for agent in agents_in_order:
+            for model in self._cache.get(self._cache_key(agent)) or ():
                 out.append(f"{agent}:{model}")
         return out
 
-    def warm(self, agent_id: str) -> tuple[str, ...]:
+    async def warm(self, agent_id: str) -> tuple[str, ...]:
         """Probe *agent_id* and store its roster in the cache.
 
         Returns the probed model tuple (possibly empty on failure).
@@ -203,7 +213,7 @@ class ACPRoster:
         """
         key = self._cache_key(agent_id)
         try:
-            models = asyncio.run(self._probe(agent_id))
+            models = await self._probe(agent_id)
         except ProbeError as exc:
             _logger.warning("ACP probe failed for agent %r: %s", agent_id, exc)
             models = ()
@@ -245,16 +255,23 @@ class ACPRoster:
     # ── Accessors used by the proxy ──────────────────────────────────
 
     @property
-    def container_name(self) -> str:
-        """Container the bound agent will exec into."""
-        return self._container_name
-
-    @property
-    def sandbox(self) -> Sandbox:
-        """Backing sandbox handle (provides the runtime + exec_stdio)."""
-        return self._sandbox
-
-    @property
     def task_id(self) -> str:
         """Identifier of the running task this roster aggregates."""
         return self._task_id
+
+    def exec_wrapper(self, agent_id: str, *, stdin: object, stdout: object) -> int:
+        """Run ``terok-{agent_id}-acp`` in the task container with bridged stdio.
+
+        Sync entry point the proxy drives via ``loop.run_in_executor`` —
+        keeps the sandbox + container handle behind one method instead of
+        leaking them as public properties just so the proxy can spawn
+        backends.  *stdin* / *stdout* are the host-side ends of an
+        ``os.pipe()`` pair (as :class:`BinaryIO`).
+        """
+        runtime = self._sandbox.runtime
+        return runtime.exec_stdio(
+            runtime.container(self._container_name),
+            [f"terok-{agent_id}-acp"],
+            stdin=stdin,
+            stdout=stdout,
+        )
