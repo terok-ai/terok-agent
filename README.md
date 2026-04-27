@@ -96,14 +96,6 @@ systemd service lifecycle.
 | `stop` | Stop a running container |
 | `vault` | Vault management (start, stop, status, install, routes) |
 
-## Documentation
-
-- [Getting started](https://terok-ai.github.io/terok-executor/) — install, build, authenticate, first run
-- [Agents](https://terok-ai.github.io/terok-executor/agents/) — catalog, custom definitions, auth flows
-- [Launch modes](https://terok-ai.github.io/terok-executor/launch-modes/) — headless, interactive, web, tool
-- [Security](https://terok-ai.github.io/terok-executor/security/) — firewall, vault, restricted mode
-- [API Reference](https://terok-ai.github.io/terok-executor/reference/) — Python API docs
-
 ## Development
 
 See the [Developer Guide](https://terok-ai.github.io/terok-executor/developer/).
