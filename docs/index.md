@@ -1,36 +1,54 @@
 # Getting started
 
+`terok-executor` runs an AI coding agent inside a hardened, rootless
+Podman container — one CLI command to launch, or one Python class to
+embed in your own tooling.
+
+![terok ecosystem — terok-executor sits between project orchestration and the hardened runtime](img/architecture.svg)
+
 ## Why terok-executor
 
-AI coding agents need network access and credentials to do useful work,
-but giving them uncontrolled access to both is a risk — a prompt-injected
-or supply-chain-compromised agent can exfiltrate API keys, push to
-arbitrary remotes, or reach services it shouldn't.
+AI coding agents need network access and credentials to do useful
+work, but giving them uncontrolled access to either is a risk: a
+prompt-injected or supply-chain-compromised agent can exfiltrate
+keys, push to arbitrary remotes, or reach services it shouldn't.
 
-terok-executor runs each agent in an isolated rootless Podman container with
-an egress firewall and a vault that keeps real secrets off the
-container filesystem. One command to build, authenticate, and launch.
+terok-executor runs each agent in an isolated rootless Podman
+container with a default-deny egress firewall and a credential
+vault that keeps secrets on the host.
 
 ## Prerequisites
 
 - Python 3.12+
 - Podman (rootless) — `podman machine init` on macOS
+- `nft` (nftables CLI)
 
-## Install
+## Install and run
 
 ```bash
 pip install terok-executor
+terok-executor run claude . -p "Add type hints to utils.py"
 ```
 
-## Build container images
+The first `run` interactively offers any missing prerequisites —
+sandbox services, container images, agent credentials — one
+`[Y/n]` prompt at a time.  Mandatory items (services, images)
+block the launch if declined; optional ones (SSH key, auth) print
+the consequence and proceed.
+
+For non-interactive environments (CI, scripts) do the bootstrap
+explicitly first:
 
 ```bash
-terok-executor build
+terok-executor setup        # install sandbox services + build base images
+terok-executor auth claude  # OAuth or API key
+terok-executor run claude . -p "..."
 ```
 
-Builds two image layers: a base image (OS, dev tools, init scripts) and
-an agent image (all AI agent CLIs, shell wrappers, ACP config). Rebuild
-with `--rebuild` to bust caches or `--full-rebuild` for a clean pull.
+`setup` is idempotent — safe to re-run after upgrades.  If you want
+to do the steps individually, `terok-executor build` only builds
+images and `terok-executor vault install` only provisions the
+vault.
 
 ## Authenticate
 
@@ -40,21 +58,27 @@ terok-executor auth vibe                # interactive API key prompt
 terok-executor auth gh --api-key ghp_…  # non-interactive
 ```
 
-Credentials are stored in a host-side database. Containers never see real
-keys — they receive phantom tokens resolved by the vault.
-See [Security](security.md) for details.
+Credentials are stored on the host; containers never see real keys.
+See [Security](security.md) for the vault details.
 
-## First run
+## Use as a library
 
-```bash
-terok-executor run claude . -p "Add type hints to utils.py"
+```python
+from terok_executor import AgentRunner
+
+runner = AgentRunner()
+runner.run_headless(
+    agent="claude",
+    repo=".",
+    prompt="Add type hints to utils.py",
+    max_turns=25,
+)
 ```
 
-This clones the current directory into a hardened container, launches
-Claude in headless mode, and streams its output. The egress firewall
-and vault are active by default.
-
-See [Launch modes](launch-modes.md) for interactive, web, and tool modes.
+`AgentRunner` is the same entry point that `terok-executor run` uses
+under the hood — and what
+[terok](https://github.com/terok-ai/terok) builds on for multi-task
+orchestration.
 
 ## Next steps
 
