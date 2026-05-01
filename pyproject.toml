@@ -4,7 +4,7 @@ build-backend = "poetry_dynamic_versioning.backend"
 
 [tool.poetry]
 name = "terok-executor"
-version = "0.0.123"
+version = "0.0.124"
 description = "Single-agent task runner for hardened Podman containers"
 readme = "README.md"
 license = "Apache-2.0"
@@ -24,14 +24,13 @@ packages = [
 
 [tool.poetry.dependencies]
 python = ">=3.12,<4.0"
-# DEV-TIME BRANCH PIN — tracks sandbox's master tip, which carries
-# gate_use_personal_ssh_default() (merged in #205) and the setup
-# aggregator (#207).  Executor itself doesn't use those, but terok's
-# PR 4 needs sandbox + executor to agree on the same sandbox version
-# — a stale URL pin here would otherwise conflict with terok's git pin
-# on the upstream sandbox tip.  Release script flips it to a URL pin
-# when the next sandbox wheel ships.
-terok-sandbox = {url = "https://github.com/terok-ai/terok-sandbox/releases/download/v0.0.103/terok_sandbox-0.0.103-py3-none-any.whl"}  # TODO: repin to wheel at release
+# DEV-TIME BRANCH PIN — tracks terok-sandbox's feat/bridge-phase, which adds
+# the shield→clearance bridge as a first-class integration phase.  Executor
+# and terok must agree on the same sandbox tip during the in-flight chain
+# (a wheel URL pin here would otherwise conflict with terok's git pin on the
+# branch).  Release script flips back to the wheel URL when the next sandbox
+# release ships.
+terok-sandbox = {url = "https://github.com/terok-ai/terok-sandbox/releases/download/v0.0.104/terok_sandbox-0.0.104-py3-none-any.whl"}
 "ruamel.yaml" = ">=0.18"
 Jinja2 = ">=3.1"
 tomli-w = ">=1.0"
