@@ -4,7 +4,7 @@ build-backend = "poetry_dynamic_versioning.backend"
 
 [tool.poetry]
 name = "terok-executor"
-version = "0.0.123"
+version = "0.0.124"
 description = "Single-agent task runner for hardened Podman containers"
 readme = "README.md"
 license = "Apache-2.0"
@@ -30,7 +30,7 @@ python = ">=3.12,<4.0"
 # (a wheel URL pin here would otherwise conflict with terok's git pin on the
 # branch).  Release script flips back to the wheel URL when the next sandbox
 # release ships.
-terok-sandbox = {git = "https://github.com/sliwowitz/terok-sandbox.git", branch = "feat/bridge-phase"}
+terok-sandbox = {url = "https://github.com/terok-ai/terok-sandbox/releases/download/v0.0.104/terok_sandbox-0.0.104-py3-none-any.whl"}
 "ruamel.yaml" = ">=0.18"
 Jinja2 = ">=3.1"
 tomli-w = ">=1.0"
