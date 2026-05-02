@@ -50,15 +50,17 @@ RUN set -eux; \
 # Shell environment: terok-env.sh is the single source of truth for PATH,
 # git identity helpers, gh/glab wrappers, and per-project agent wrappers.
 # It lives in /etc/profile.d/ and is sourced by all three shell modes.
+#
+# For interactive non-login shells we hook the system-wide bashrc.  Debian
+# patches bash to source /etc/bash.bashrc; Fedora's bash never reads that
+# path and instead sources /etc/bashrc indirectly via the per-user .bashrc
+# from /etc/skel.  Pick the right file per family or the help banner is
+# silently dropped on Fedora.
 COPY scripts/terok-env.sh /etc/profile.d/terok-env.sh
 RUN chmod +x /etc/profile.d/terok-env.sh; \
-    if [ -f /etc/bash.bashrc ]; then \
-      printf '\n# terok environment (PATH, git identity, agent wrappers)\n. /etc/profile.d/terok-env.sh\n' >> /etc/bash.bashrc; \
-    else \
-      printf '# terok environment (PATH, git identity, agent wrappers)\n. /etc/profile.d/terok-env.sh\n' > /etc/bash.bashrc; \
-    fi; \
-    # Interactive-only: help banner (login shells only)
-    printf '\n# Help banner (interactive login only)\nif [ -t 1 ] && [ -z "$_TEROK_BANNER_SHOWN" ]; then\n  export _TEROK_BANNER_SHOWN=1\n  _TEROK_LOGIN=1 hilfe --kurz 2>/dev/null || true\nfi\n' >> /etc/bash.bashrc
+    bashrc={% if family == "deb" %}/etc/bash.bashrc{% else %}/etc/bashrc{% endif %}; \
+    printf '\n# terok environment (PATH, git identity, agent wrappers)\n. /etc/profile.d/terok-env.sh\n' >> "$bashrc"; \
+    printf '\n# Help banner (interactive login only)\nif [ -t 1 ] && [ -z "$_TEROK_BANNER_SHOWN" ]; then\n  export _TEROK_BANNER_SHOWN=1\n  _TEROK_LOGIN=1 hilfe --kurz 2>/dev/null || true\nfi\n' >> "$bashrc"
 
 # Symlink for per-task agent wrappers (resolved at runtime via mount).
 RUN mkdir -p /usr/local/share/terok && \

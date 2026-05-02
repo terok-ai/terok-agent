@@ -515,6 +515,17 @@ class TestTemplateRendering:
         assert "opencode.ai/install" in content
         assert 'LABEL ai.terok.agents="blablador,opencode"' in content
 
+    def test_l1_banner_targets_family_specific_bashrc(self) -> None:
+        # Debian patches bash to source /etc/bash.bashrc; Fedora's bash never
+        # reads that path and instead sources /etc/bashrc.  Wiring the help
+        # banner into the wrong file silently drops it on the other family.
+        deb = render_l1("terok-l0:test", family="deb")
+        rpm = render_l1("terok-l0:test", family="rpm")
+        assert "bashrc=/etc/bash.bashrc" in deb
+        assert "bashrc=/etc/bashrc" in rpm
+        assert "_TEROK_LOGIN=1 hilfe --kurz" in deb
+        assert "_TEROK_LOGIN=1 hilfe --kurz" in rpm
+
     def test_l1_unknown_agent_raises(self) -> None:
         with pytest.raises(ValueError, match="Unknown roster entries"):
             render_l1("terok-l0:test", family="deb", agents=("not-a-real-agent",))

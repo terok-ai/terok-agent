@@ -5,7 +5,7 @@
 
 # Core terok container environment — sourced by ALL shell modes:
 #   - Non-interactive (bash -c): via BASH_ENV
-#   - Interactive:               via /etc/bash.bashrc
+#   - Interactive:               via /etc/bash.bashrc (Debian) or /etc/bashrc (Fedora)
 #   - Login:                     via /etc/profile.d/
 #
 # Guard against redundant sourcing.  Login shells hit both profile.d and
