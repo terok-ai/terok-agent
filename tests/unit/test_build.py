@@ -523,8 +523,10 @@ class TestTemplateRendering:
         rpm = render_l1("terok-l0:test", family="rpm")
         assert "bashrc=/etc/bash.bashrc" in deb
         assert "bashrc=/etc/bashrc" in rpm
-        assert "_TEROK_LOGIN=1 hilfe --kurz" in deb
-        assert "_TEROK_LOGIN=1 hilfe --kurz" in rpm
+        # Banner snippet is concatenated from a sidecar file (see
+        # scripts/terok-bash-banner.sh) into whichever bashrc the family uses.
+        assert 'cat /tmp/terok-bash-banner.sh >> "$bashrc"' in deb
+        assert 'cat /tmp/terok-bash-banner.sh >> "$bashrc"' in rpm
 
     def test_l1_unknown_agent_raises(self) -> None:
         with pytest.raises(ValueError, match="Unknown roster entries"):

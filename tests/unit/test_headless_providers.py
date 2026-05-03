@@ -20,6 +20,8 @@ from terok_executor.provider.providers import (
     get_provider,
 )
 from terok_executor.provider.wrappers import (
+    INITIAL_PROMPT_CONSUMED_PATH,
+    INITIAL_PROMPT_PATH,
     generate_agent_wrapper,
     generate_all_wrappers,
 )
@@ -147,6 +149,31 @@ class TestGenerateAgentWrapper:
                 continue
             wrapper = _provider_wrapper(name)
             assert "vibe-model-sync" not in wrapper, f"{name} should not have model sync"
+
+    def test_all_wrappers_pick_up_initial_prompt(self) -> None:
+        """Every provider's wrapper consumes initial-prompt.txt one-shot."""
+        for name in AGENT_PROVIDERS:
+            wrapper = _provider_wrapper(name)
+            assert INITIAL_PROMPT_PATH in wrapper, f"{name} missing initial-prompt pickup"
+            assert INITIAL_PROMPT_CONSUMED_PATH in wrapper, f"{name} missing one-shot rename"
+            assert f'set -- "$(cat {INITIAL_PROMPT_PATH})"' in wrapper, (
+                f"{name} should set positional args from the prompt file"
+            )
+
+    def test_initial_prompt_skipped_when_session_present(self) -> None:
+        """Wrappers with a session_file gate the prompt pickup on no resume."""
+        for name in ("vibe", "opencode", "blablador", "kisski"):
+            p = AGENT_PROVIDERS[name]
+            wrapper = _provider_wrapper(name)
+            assert f"[ ! -s {CONTAINER_TEROK_DIR}/{p.session_file} ]" in wrapper, (
+                f"{name} initial-prompt block should defer to session resume"
+            )
+
+    def test_initial_prompt_skipped_in_headless(self) -> None:
+        """Pickup block requires `_timeout` empty so headless never picks up the file."""
+        for name in AGENT_PROVIDERS:
+            wrapper = _provider_wrapper(name)
+            assert '[ -z "$_timeout" ]' in wrapper, f"{name} missing headless guard"
 
 
 class TestResolveProviderValue:

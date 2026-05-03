@@ -17,7 +17,7 @@ from pathlib import Path
 
 from terok_executor._util import ensure_dir, ensure_dir_writable, yaml_load as _yaml_load
 
-from .wrappers import WrapperConfig
+from .wrappers import WrapperConfig, initial_prompt_block
 
 # TODO: future — support global agent definitions in terok-config.yml (agent.subagents).
 # When implemented, global subagents would be merged with per-project subagents before
@@ -395,6 +395,10 @@ def _generate_claude_wrapper(cfg: WrapperConfig) -> str:
     lines.append("    [ -s /home/dev/.terok/claude-session.txt ] && \\")
     lines.append('       { [ -n "$_timeout" ] || [ $# -eq 0 ]; } && \\')
     lines.append('        _args+=(--resume "$(cat /home/dev/.terok/claude-session.txt)")')
+
+    # Pick up the task's initial prompt on bare interactive launch when no
+    # resume is being injected.  Mirrors the generic wrapper's behaviour.
+    lines.extend(initial_prompt_block("/home/dev/.terok/claude-session.txt"))
 
     # Git env vars and exec — with optional timeout.
     # _terok_resume_or_fresh guards against stale session IDs: if the agent

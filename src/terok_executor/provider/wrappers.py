@@ -21,6 +21,13 @@ if TYPE_CHECKING:
     from collections.abc import Callable
 
 
+INITIAL_PROMPT_PATH = "/home/dev/.terok/initial-prompt.txt"
+"""Container path of the per-task initial prompt the TUI/CLI writes at launch."""
+
+INITIAL_PROMPT_CONSUMED_PATH = "/home/dev/.terok/initial-prompt.consumed.txt"
+"""Where the prompt file is moved after an agent picks it up (one-shot semantics)."""
+
+
 @dataclass(frozen=True)
 class WrapperConfig:
     """Groups parameters for generating the Claude shell wrapper."""
@@ -122,6 +129,30 @@ def _opencode_plugin_block(provider: AgentProvider) -> list[str]:
         '    if [ -f "$_plugin_src" ]; then',
         '        mkdir -p "$_plugin_dir"',
         '        ln -sf "$_plugin_src" "$_plugin_dir/terok-session.mjs"',
+        "    fi",
+    ]
+
+
+def initial_prompt_block(session_path: str | None) -> list[str]:
+    """Emit bash lines that pick up the task's initial prompt as the first message.
+
+    Fires only on a bare interactive launch (no user args, no headless timeout)
+    when no session is being resumed.  The file is renamed after consumption so
+    a subsequent agent invocation falls through to ``--resume`` (or starts
+    fresh) instead of replaying the same prompt.
+
+    The renamed copy is preserved as a paper trail; the user can ``mv`` it
+    back to recover from a launch that crashed before the session was saved.
+    """
+    guards = ['[ -z "$_timeout" ]', "[ $# -eq 0 ]"]
+    if session_path:
+        guards.append(f"[ ! -s {session_path} ]")
+    guards.append(f"[ -s {INITIAL_PROMPT_PATH} ]")
+    return [
+        "    # Pick up the task's initial prompt as the first message (one-shot).",
+        f"    if {' && '.join(guards)}; then",
+        f'        set -- "$(cat {INITIAL_PROMPT_PATH})"',
+        f"        mv {INITIAL_PROMPT_PATH} {INITIAL_PROMPT_CONSUMED_PATH}",
         "    fi",
     ]
 
@@ -288,6 +319,7 @@ def _generate_generic_wrapper(provider: AgentProvider) -> str:
     lines.extend(_opencode_plugin_block(provider))
     lines.extend(_session_resume_block(provider, session_path))
     lines.extend(_codex_instr_block(provider))
+    lines.extend(initial_prompt_block(session_path))
     lines.extend(_vibe_capture_fn(provider, session_path))
 
     headless_cmd = _wrap_invocation(

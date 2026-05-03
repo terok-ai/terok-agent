@@ -169,6 +169,14 @@ class TestGenerateClaudeWrapper:
         wrapper = _generate_claude_wrapper(WrapperConfig(has_agents=False))
         assert f'"{CONTAINER_CLAUDE_MEMORY_OVERRIDE}"' in wrapper
 
+    def test_wrapper_picks_up_initial_prompt(self) -> None:
+        """Wrapper consumes initial-prompt.txt one-shot, gated on no resume."""
+        wrapper = _generate_claude_wrapper(WrapperConfig(has_agents=False))
+        assert "/home/dev/.terok/initial-prompt.txt" in wrapper
+        assert "/home/dev/.terok/initial-prompt.consumed.txt" in wrapper
+        # Resume always wins — pickup is skipped if the session file is present.
+        assert f"[ ! -s {CONTAINER_CLAUDE_SESSION_PATH} ]" in wrapper
+
 
 class TestWriteSessionHook:
     """Tests for _write_session_hook."""

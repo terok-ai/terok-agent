@@ -57,10 +57,13 @@ RUN set -eux; \
 # from /etc/skel.  Pick the right file per family or the help banner is
 # silently dropped on Fedora.
 COPY scripts/terok-env.sh /etc/profile.d/terok-env.sh
+COPY scripts/terok-bash-banner.sh /tmp/terok-bash-banner.sh
 RUN chmod +x /etc/profile.d/terok-env.sh; \
     bashrc={% if family == "deb" %}/etc/bash.bashrc{% else %}/etc/bashrc{% endif %}; \
     printf '\n# terok environment (PATH, git identity, agent wrappers)\n. /etc/profile.d/terok-env.sh\n' >> "$bashrc"; \
-    printf '\n# Help banner (interactive login only)\nif [ -t 1 ] && [ -z "$_TEROK_BANNER_SHOWN" ]; then\n  export _TEROK_BANNER_SHOWN=1\n  _TEROK_LOGIN=1 hilfe --kurz 2>/dev/null || true\nfi\n' >> "$bashrc"
+    printf '\n' >> "$bashrc"; \
+    cat /tmp/terok-bash-banner.sh >> "$bashrc"; \
+    rm -f /tmp/terok-bash-banner.sh
 
 # Symlink for per-task agent wrappers (resolved at runtime via mount).
 RUN mkdir -p /usr/local/share/terok && \
