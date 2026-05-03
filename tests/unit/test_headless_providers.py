@@ -175,6 +175,24 @@ class TestGenerateAgentWrapper:
             wrapper = _provider_wrapper(name)
             assert '[ -z "$_timeout" ]' in wrapper, f"{name} missing headless guard"
 
+    def test_claude_wrapper_refuses_setup_token(self) -> None:
+        """Claude wrapper short-circuits setup-token with terok auth hint."""
+        wrapper = _provider_wrapper("claude")
+        assert "setup-token)" in wrapper
+        assert "terok auth claude" in wrapper
+
+    def test_codex_wrapper_refuses_login_logout(self) -> None:
+        """Codex wrapper refuses login and logout with terok auth hint."""
+        wrapper = _provider_wrapper("codex")
+        assert "login|logout)" in wrapper
+        assert "terok auth codex" in wrapper
+
+    def test_wrappers_without_refuse_have_no_guard(self) -> None:
+        """Providers without wrapper.refuse_subcommands emit no guard block."""
+        # vibe is API-key only — no login subcommand exists, no refuse list.
+        wrapper = _provider_wrapper("vibe")
+        assert "Login is unavailable" not in wrapper
+
 
 class TestResolveProviderValue:
     """Tests for resolve_provider_value() config resolution."""

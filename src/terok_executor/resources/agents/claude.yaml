@@ -32,6 +32,14 @@ capabilities:
   add_dir: true
   log_format: claude-stream-json
 
+# Login is performed on the host via `terok auth claude` (writes a phantom
+# token into the vault). In-container login would taint the host-shared
+# mount and break credential containment (terok-ai/terok#873). The egress
+# firewall blocks the OAuth handshake regardless; this guard is a friendly
+# UX layer that fails fast with a clear message.
+wrapper:
+  refuse_subcommands: [setup-token]
+
 vault:
   route_prefix: claude
   upstream: https://api.anthropic.com

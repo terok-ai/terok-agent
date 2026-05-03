@@ -67,6 +67,23 @@ class MountDef:
     label: str
     """Human-readable label (e.g. ``"Codex config"``)."""
 
+    credential_file: str = ""
+    """Credential file path relative to the mount root (e.g. ``".credentials.json"``).
+
+    Empty when the mount carries no auth artefact (e.g. opencode state dirs).
+    Populated from the matching ``vault.credential_file`` so callers can
+    layer a read-only shadow over the file without touching the rest of
+    the shared mount.  See [terok-ai/terok#873](https://github.com/terok-ai/terok/issues/873).
+    """
+
+    provider: str = ""
+    """Roster entry name that contributed this mount (e.g. ``"claude"``).
+
+    Empty for explicit ``mounts:`` blocks that aren't tied to a single
+    provider.  Used by the credential-shadow path to match against
+    [`ContainerEnvSpec.expose_credential_providers`][terok_executor.ContainerEnvSpec.expose_credential_providers].
+    """
+
 
 @dataclass(frozen=True)
 class VaultRoute:
@@ -471,6 +488,10 @@ def load_roster() -> AgentRoster:
             agent_names.append(name)
             providers[name] = _to_agent_provider(name, data)
 
+        # Credential file from the vault section — attached to whichever
+        # auth/mount entry shares the same host_dir.  Empty when absent.
+        credential_file = (data.get("vault") or {}).get("credential_file", "")
+
         # Auth: explicit auth section, or auto-derived from opencode config
         auth_prov = _to_auth_provider(name, data)
         if auth_prov is not None:
@@ -481,6 +502,8 @@ def load_roster() -> AgentRoster:
                     host_dir=auth_prov.host_dir_name,
                     container_path=auth_prov.container_mount,
                     label=f"{auth_prov.label} config",
+                    credential_file=credential_file,
+                    provider=name,
                 )
         elif kind not in ("tool", "runtime"):
             oc_auth = _derive_opencode_auth(name, data)
@@ -491,6 +514,8 @@ def load_roster() -> AgentRoster:
                         host_dir=oc_auth.host_dir_name,
                         container_path=oc_auth.container_mount,
                         label=f"{oc_auth.label} config",
+                        credential_file=credential_file,
+                        provider=name,
                     )
 
         # Explicit mounts section
@@ -748,6 +773,7 @@ def _to_agent_provider(name: str, data: dict) -> AgentProvider:
         # Log format
         log_format=caps.get("log_format", "plain"),
         opencode_config=oc,
+        refuse_subcommands=tuple(data.get("wrapper", {}).get("refuse_subcommands", ())),
     )
 
 

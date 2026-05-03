@@ -4,7 +4,7 @@ build-backend = "poetry_dynamic_versioning.backend"
 
 [tool.poetry]
 name = "terok-executor"
-version = "0.0.128"
+version = "0.0.129"
 description = "Single-agent task runner for hardened Podman containers"
 readme = "README.md"
 license = "Apache-2.0"
@@ -24,10 +24,7 @@ packages = [
 
 [tool.poetry.dependencies]
 python = ">=3.12,<4.0"
-# DEV-TIME BRANCH PIN — tracks the sandbox branch for the shared Codex
-# vaulted-OAuth fix until that PR lands and a wheel ships.  The release
-# chain flips this back to a wheel URL.
-terok-sandbox = {url = "https://github.com/terok-ai/terok-sandbox/releases/download/v0.0.106/terok_sandbox-0.0.106-py3-none-any.whl"}
+terok-sandbox = {url = "https://github.com/terok-ai/terok-sandbox/releases/download/v0.0.107/terok_sandbox-0.0.107-py3-none-any.whl"}
 "ruamel.yaml" = ">=0.18"
 Jinja2 = ">=3.1"
 tomli-w = ">=1.0"

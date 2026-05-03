@@ -156,6 +156,16 @@ class AgentProvider:
     settings that are injected into the container environment.
     """
 
+    refuse_subcommands: tuple[str, ...] = ()
+    """Subcommands the in-container wrapper refuses with a friendly error.
+
+    Used to block credential-handling flows (``login``, ``logout``,
+    ``setup-token``) that would otherwise pollute the host-shared mount —
+    operators authenticate on the host via ``terok auth`` instead.  Best
+    effort only; the firewall is the actual enforcement
+    ([terok-ai/terok#873](https://github.com/terok-ai/terok/issues/873)).
+    """
+
     @property
     def uses_opencode_instructions(self) -> bool:
         """Whether the provider uses OpenCode's instruction system."""

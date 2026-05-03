@@ -137,6 +137,18 @@ class ContainerEnvSpec:
     """Provider subset whose previously managed config patch values should
     be removed if still owned by terok.  ``None`` removes nothing."""
 
+    expose_credential_providers: frozenset[str] = frozenset()
+    """Providers whose credential file should remain writable in-container.
+
+    By default every provider with a [`vault.credential_file`][terok_executor.VaultRoute.credential_file]
+    gets the file mounted read-only on top of its shared config dir, so an
+    in-container ``/login`` cannot taint the host copy
+    ([terok-ai/terok#873](https://github.com/terok-ai/terok/issues/873)).
+    Providers in this set keep the writable bind — used by terok's
+    experimental ``expose_oauth_token`` mode where the agent intentionally
+    manages its own token.
+    """
+
     # -- Permissions -------------------------------------------------------
 
     unrestricted: bool = True
@@ -270,8 +282,19 @@ def assemble_container_env(
     volumes.append(VolumeSpec(spec.workspace_host_path, "/workspace", sharing=Sharing.PRIVATE))
 
     # 8. Shared config mounts from roster
+    #
+    #    Resolve task_dir up-front so the credential-shadow path has a
+    #    private scratch location for placeholder files when the host
+    #    has no credential yet.  The *task_dir = ...* assignment that
+    #    used to live near the return is now this resolution.
     mounts_base = spec.envs_dir or _mounts_dir()
-    volumes += _shared_config_mounts(roster, mounts_base)
+    task_dir = spec.task_dir or Path(tempfile.mkdtemp(prefix=f"terok-executor-{spec.task_id}-"))
+    volumes += _shared_config_mounts(
+        roster,
+        mounts_base,
+        task_dir=task_dir,
+        expose_credential_providers=spec.expose_credential_providers,
+    )
 
     # 8b. Re-apply vault config patches (idempotent — ensures shared mount
     #     dirs contain correct vault addresses even after state wipe).
@@ -332,9 +355,6 @@ def assemble_container_env(
     # 13. Extra volumes
     volumes.extend(spec.extra_volumes)
 
-    # Resolve task_dir
-    task_dir = spec.task_dir or Path(tempfile.mkdtemp(prefix=f"terok-executor-{spec.task_id}-"))
-
     return ContainerEnvResult(env=env, volumes=tuple(volumes), task_dir=task_dir)
 
 
@@ -365,18 +385,53 @@ def _resolve_git_identity(spec: ContainerEnvSpec, roster: AgentRoster) -> dict[s
     }
 
 
-def _shared_config_mounts(roster: AgentRoster, mounts_base: Path) -> list[VolumeSpec]:
+_CRED_PLACEHOLDER_DIR = "cred-placeholders"
+
+
+def _shared_config_mounts(
+    roster: AgentRoster,
+    mounts_base: Path,
+    *,
+    task_dir: Path,
+    expose_credential_providers: frozenset[str] = frozenset(),
+) -> list[VolumeSpec]:
     """Derive shared volume specs from the agent roster.
 
     Uses ``roster.mounts`` — the already-deduplicated list that merges auth
     provider mounts and explicit ``mounts:`` YAML sections.  Creates host
     directories on demand.
+
+    For mounts that carry a [`MountDef.credential_file`][terok_executor.roster.loader.MountDef.credential_file],
+    a read-only file mount is layered on top of the shared directory so an
+    in-container ``/login`` cannot rewrite the host-side phantom token
+    (terok-ai/terok#873).  The source is the host file when present, else
+    a per-task empty placeholder under ``task_dir/cred-placeholders/`` —
+    so the read-only shadow is consistent regardless of host auth state.
+
+    Providers in *expose_credential_providers* keep the writable mount —
+    used by terok's experimental ``expose_oauth_token`` mode where the
+    agent intentionally manages its own token.
     """
     specs: list[VolumeSpec] = []
+    placeholder_dir = task_dir / _CRED_PLACEHOLDER_DIR
+
     for m in roster.mounts:
         host_dir = mounts_base / m.host_dir
         host_dir.mkdir(parents=True, exist_ok=True)
         specs.append(VolumeSpec(host_dir, m.container_path))
+
+        if not m.credential_file or m.provider in expose_credential_providers:
+            continue
+
+        host_file = host_dir / m.credential_file
+        if not host_file.exists():
+            host_file = placeholder_dir / m.host_dir
+            host_file.parent.mkdir(parents=True, exist_ok=True)
+            host_file.touch()
+
+        container_file = f"{m.container_path}/{m.credential_file}"
+        specs.append(VolumeSpec(host_file, container_file, read_only=True))
+
     return specs
 
 
