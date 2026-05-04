@@ -78,8 +78,10 @@ async def probe_agent_models(
     ``initialize`` and ``session/new``, parses the response for the
     ``category: "model"`` configOption, and returns the model ids.
 
-    Returns an empty tuple on timeout or malformed responses — the
-    caller is expected to cache that and skip the agent until restart.
+    Raises :class:`ProbeError` on timeout, malformed JSON, or any
+    other handshake failure.  Callers (the roster cache) typically
+    catch it, cache an empty roster, and skip the agent until the
+    container is restarted.
     """
     wrapper_cmd = [f"terok-{agent_id}-acp"]
     loop = asyncio.get_running_loop()
@@ -161,17 +163,30 @@ async def _drive_handshake(
         writer.write((json.dumps(payload) + "\n").encode("utf-8"))
         await writer.drain()
 
-    async def _read_frame() -> dict[str, Any]:
-        line = await reader.readline()
-        if not line:
-            raise ProbeError(f"agent {agent_id!r} closed stdout before handshake completed")
-        try:
-            frame = json.loads(line)
-        except json.JSONDecodeError as exc:
-            raise ProbeError(f"agent {agent_id!r} sent malformed JSON during probe") from exc
-        if not isinstance(frame, dict):
-            raise ProbeError(f"agent {agent_id!r} sent a non-object JSON-RPC frame")
-        return frame
+    async def _read_response(*, expected_id: int) -> dict[str, Any]:
+        # Skip notifications (no ``id``) so a chatty agent's progress
+        # events don't get mistaken for the reply.  Out-of-order
+        # response ids error out — queueing isn't worth it for a
+        # handshake this short-lived.
+        while True:
+            line = await reader.readline()
+            if not line:
+                raise ProbeError(f"agent {agent_id!r} closed stdout before handshake completed")
+            try:
+                frame = json.loads(line)
+            except json.JSONDecodeError as exc:
+                raise ProbeError(f"agent {agent_id!r} sent malformed JSON during probe") from exc
+            if not isinstance(frame, dict):
+                raise ProbeError(f"agent {agent_id!r} sent a non-object JSON-RPC frame")
+            frame_id = frame.get("id")
+            if frame_id == expected_id:
+                return frame
+            if "method" in frame and frame_id is None:
+                continue
+            raise ProbeError(
+                f"agent {agent_id!r} sent unexpected probe frame id {frame_id!r}, "
+                f"expected {expected_id!r}"
+            )
 
     # initialize ---------------------------------------------------------
     # Probe ids are local to this short-lived handshake — no shared id
@@ -187,7 +202,7 @@ async def _drive_handshake(
             },
         }
     )
-    init_response = await _read_frame()
+    init_response = await _read_response(expected_id=1)
     if "error" in init_response:
         raise ProbeError(f"agent {agent_id!r} rejected initialize: {init_response['error']}")
 
@@ -200,7 +215,7 @@ async def _drive_handshake(
             "params": {"cwd": cwd, "mcpServers": []},
         }
     )
-    new_response = await _read_frame()
+    new_response = await _read_response(expected_id=2)
     if "error" in new_response:
         raise ProbeError(f"agent {agent_id!r} rejected session/new: {new_response['error']}")
 

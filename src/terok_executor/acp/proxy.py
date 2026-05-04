@@ -115,6 +115,9 @@ class ACPProxy:
                 except json.JSONDecodeError:
                     _logger.warning("ACP proxy: client sent non-JSON frame, ignoring")
                     continue
+                if not isinstance(frame, dict):
+                    _logger.warning("ACP proxy: client sent non-object JSON-RPC frame, ignoring")
+                    continue
                 await self._handle_client_frame(frame)
         finally:
             await self._teardown_backend()
@@ -203,7 +206,18 @@ class ACPProxy:
 
     async def _handle_set_config_option(self, frame: dict[str, Any]) -> None:
         """Bind on first call; forward (with translation) on subsequent calls."""
-        params = frame.get("params") or {}
+        raw_params = frame.get("params")
+        if raw_params is None:
+            params: dict[str, Any] = {}
+        elif isinstance(raw_params, dict):
+            params = raw_params
+        else:
+            await self._reply_error(
+                frame.get("id"),
+                code=JSONRPC_INVALID_PARAMS,
+                message="params must be an object",
+            )
+            return
         category = params.get("category")
         value = params.get("value")
         if category != MODEL_OPTION_CATEGORY or not isinstance(value, str):
@@ -431,6 +445,9 @@ class ACPProxy:
                 frame = json.loads(line)
             except json.JSONDecodeError:
                 _logger.warning("ACP proxy: backend sent non-JSON frame, dropping")
+                continue
+            if not isinstance(frame, dict):
+                _logger.warning("ACP proxy: backend sent non-object JSON-RPC frame, dropping")
                 continue
 
             # Drop responses to the proxy's own probe/replay frames;
