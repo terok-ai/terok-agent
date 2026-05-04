@@ -53,6 +53,7 @@ class TestLoadBundledAgents:
             "blablador",
             "kisski",
             "opencode",
+            "openrouter",
             "sonar",
             "toad",
             "vibe",
@@ -362,7 +363,16 @@ class TestLoadRegistry:
 
     def test_loads_all_agents(self) -> None:
         reg = load_roster()
-        expected_agents = {"claude", "codex", "copilot", "vibe", "blablador", "kisski", "opencode"}
+        expected_agents = {
+            "claude",
+            "codex",
+            "copilot",
+            "vibe",
+            "blablador",
+            "kisski",
+            "opencode",
+            "openrouter",
+        }
         assert set(reg.agent_names) == expected_agents
 
     def test_all_names_includes_tools(self) -> None:
@@ -441,6 +451,7 @@ class TestLoadRegistry:
         env = reg.collect_opencode_provider_env()
         assert any(k.startswith("TEROK_OC_BLABLADOR_") for k in env)
         assert any(k.startswith("TEROK_OC_KISSKI_") for k in env)
+        assert any(k.startswith("TEROK_OC_OPENROUTER_") for k in env)
 
 
 # ---------------------------------------------------------------------------

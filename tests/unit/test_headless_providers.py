@@ -53,9 +53,18 @@ def _all_wrappers(*, has_agents: bool = False) -> str:
 class TestAgentProviderRegistry:
     """Tests for the AGENT_PROVIDERS registry."""
 
-    def test_all_seven_providers_exist(self) -> None:
-        """Registry contains exactly the seven expected providers."""
-        expected = {"claude", "codex", "copilot", "vibe", "blablador", "opencode", "kisski"}
+    def test_registry_contains_expected_providers(self) -> None:
+        """Registry contains exactly the expected set of bundled providers."""
+        expected = {
+            "claude",
+            "codex",
+            "copilot",
+            "vibe",
+            "blablador",
+            "opencode",
+            "kisski",
+            "openrouter",
+        }
         assert set(AGENT_PROVIDERS.keys()) == expected
 
     def test_provider_names_tuple(self) -> None:
@@ -130,7 +139,7 @@ class TestGenerateAgentWrapper:
 
     def test_session_resume_uses_explicit_id(self) -> None:
         """Providers with session_file use --session/--resume with explicit ID."""
-        for name in ("vibe", "opencode", "blablador", "kisski"):
+        for name in ("vibe", "opencode", "blablador", "kisski", "openrouter"):
             p = AGENT_PROVIDERS[name]
             wrapper = _provider_wrapper(name)
             assert p.resume_flag in wrapper, f"{name} missing resume flag"
