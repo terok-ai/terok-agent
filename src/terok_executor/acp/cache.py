@@ -4,10 +4,9 @@
 """Per-agent model roster cache for the ACP host-proxy.
 
 Probing an agent (initialize + session/new + read configOptions) is
-expensive — hundreds of milliseconds — and the result is stable for the
-lifetime of an authenticated session.  The cache is keyed
-``(image_id, auth_identity, agent_id)``: same image, same auth, same agent
-⇒ same model list.
+expensive and the result is stable for the lifetime of an authenticated
+session.  The cache is keyed ``(image_id, auth_identity, agent_id)``:
+same image, same auth, same agent ⇒ same model list.
 
 The cache is populated lazily on the first ``session/new`` after a new
 auth, and never re-probed mid-session.  ``invalidate_auth`` lets workflows

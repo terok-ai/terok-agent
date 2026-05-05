@@ -11,10 +11,9 @@ agent currently advertises, we drive a minimal handshake:
 2. ``session/new`` — receive ``configOptions`` (the model list lives here)
 3. close stdin — agent exits cleanly
 
-The handshake is cheap (a few round-trips, hundreds of milliseconds at
-most) but non-trivial to repeat: the result is cached by
-:class:`~terok_executor.acp.cache.AgentRosterCache` and reused for the
-lifetime of the authenticated session.
+The handshake is cheap (a few round-trips) but non-trivial to repeat:
+the result is cached by :class:`~terok_executor.acp.cache.AgentRosterCache`
+and reused for the lifetime of the authenticated session.
 
 The probe is transport-agnostic on top of
 :meth:`terok_sandbox.ContainerRuntime.exec_stdio` — it owns no FDs of its
@@ -41,10 +40,9 @@ _logger = logging.getLogger(__name__)
 DEFAULT_PROBE_TIMEOUT_SEC = 8.0
 """Per-call timeout for the full probe handshake.
 
-Empirically claude-agent-acp answers ``initialize`` in well under a
-second; eight seconds gives a generous margin for cold container exec
-without making startups feel sticky.  Override per-call with the
-``timeout`` parameter or globally via ``TEROK_ACP_PROBE_TIMEOUT_SECS``.
+Generous margin so a cold container exec doesn't trip the timeout.
+Override per-call with the ``timeout`` parameter or globally via
+``TEROK_ACP_PROBE_TIMEOUT_SECS``.
 """
 
 ACP_PROTOCOL_VERSION = 1
