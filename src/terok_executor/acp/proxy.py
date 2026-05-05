@@ -192,14 +192,16 @@ class ACPProxy:
 
         self._client_session_id = "proxy-1"
         models = await self._roster.list_available_agents()
+        current = models[0] if models else None
         await self._send_to_client(
             {
                 "jsonrpc": "2.0",
                 "id": frame.get("id"),
                 "result": {
                     "sessionId": self._client_session_id,
-                    "configOptions": [_build_model_config_option(models)],
-                    "availableModes": [],
+                    "models": _build_models_block(models),
+                    "modes": {"currentModeId": None, "availableModes": []},
+                    "configOptions": [_build_model_config_option(models, current=current)],
                 },
             }
         )
@@ -316,17 +318,20 @@ class ACPProxy:
         # cross-agent options.
         bound_models = await self._roster.list_available_agents()
         collapsed = [m for m in bound_models if m.startswith(f"{agent_id}{MODEL_NAMESPACE_SEP}")]
+        current = f"{agent_id}{MODEL_NAMESPACE_SEP}{model_id}"
         await self._send_to_client(
             {
                 "jsonrpc": "2.0",
                 "id": client_frame.get("id"),
                 "result": {
-                    "configOptions": [
-                        _build_model_config_option(
-                            collapsed, current=f"{agent_id}{MODEL_NAMESPACE_SEP}{model_id}"
-                        )
-                    ],
-                    "availableModes": [],
+                    "models": {
+                        "availableModels": [
+                            {"modelId": m, "name": _humanise_model_id(m)} for m in collapsed
+                        ],
+                        "currentModelId": current,
+                    },
+                    "modes": {"currentModeId": None, "availableModes": []},
+                    "configOptions": [_build_model_config_option(collapsed, current=current)],
                 },
             }
         )
@@ -600,20 +605,39 @@ def _build_model_config_option(
 ) -> dict[str, Any]:
     """Build a ``category: "model"`` configOption advertising *namespaced_models*.
 
-    The shape mirrors what we observed in the ACP schema during design:
-    a select-shaped option with one entry per choice.  Tests and
-    real-world clients can both read it without round-tripping through
-    the actual ACP schema definition.
+    Matches the ACP schema as emitted by ``@agentclientprotocol/claude-agent-acp``
+    (and consumed by Zed): flat ``options`` array with ``value`` keys,
+    plus the ``type: "select"`` discriminator and ``name`` /
+    ``description`` fields.  Earlier nested ``select.options`` shape
+    fails Zed's deserialiser.
     """
     return {
         "id": "model",
+        "name": "Model",
+        "description": "AI model to use",
         "category": MODEL_OPTION_CATEGORY,
+        "type": "select",
         "currentValue": current,
-        "select": {
-            "options": [
-                {"id": ident, "name": _humanise_model_id(ident)} for ident in namespaced_models
-            ],
-        },
+        "options": [
+            {"value": ident, "name": _humanise_model_id(ident)} for ident in namespaced_models
+        ],
+    }
+
+
+def _build_models_block(namespaced_models: list[str]) -> dict[str, Any]:
+    """Build the top-level ``models`` block of a ``session/new`` result.
+
+    Modern ACP carries the model picker in ``result.models`` (using
+    ``modelId`` keys) in addition to the structured ``configOptions``;
+    Zed reads from there.  Defaults the current selection to the first
+    available agent's first model so a fresh session has something
+    selected to send a prompt to — clients otherwise refuse to start.
+    """
+    return {
+        "availableModels": [
+            {"modelId": ident, "name": _humanise_model_id(ident)} for ident in namespaced_models
+        ],
+        "currentModelId": namespaced_models[0] if namespaced_models else None,
     }
 
 
@@ -635,29 +659,55 @@ def _with_params_value(frame: dict[str, Any], new_value: Any) -> dict[str, Any]:
 
 
 def _rewrite_model_options_in_place(frame: dict[str, Any], bound_agent: str) -> None:
-    """Mutate *frame* so any ``configOptions[category=model]`` is namespaced.
+    """Mutate *frame* so any model ids are namespaced as ``agent:model``.
 
     Backends emit bare model ids (``opus-4.6``); clients expect
     namespaced ids (``claude:opus-4.6``).  After bind, only the bound
-    agent's models should appear; the proxy adds the prefix here, and
-    namespaces ``currentValue`` too so the client's view of the
-    selected model stays consistent with the choices it sees.
+    agent's models should appear; the proxy adds the prefix on every
+    place a model id can show up:
+
+    - ``configOptions[category=model].currentValue``
+    - ``configOptions[category=model].options[*].id`` / ``.value``
+    - ``models.currentModelId``
+    - ``models.availableModels[*].modelId``
+
+    The two ``models.*`` paths matter for the post-bind ``session/new``
+    reply: claude-agent-acp v0.32+ carries the picker primarily in
+    ``result.models``, and Zed reads from there — leaving those bare
+    would surface ``opus-4.6`` in the picker even though the client
+    has to send ``claude:opus-4.6`` back.
     """
     result = frame.get("result")
     if not isinstance(result, dict):
         return
+
+    def _prefix(value: str) -> str:
+        return f"{bound_agent}{MODEL_NAMESPACE_SEP}{value}"
+
     for opt in result.get("configOptions") or []:
         if not isinstance(opt, dict) or opt.get("category") != MODEL_OPTION_CATEGORY:
             continue
         current = opt.get("currentValue")
         if isinstance(current, str) and MODEL_NAMESPACE_SEP not in current:
-            opt["currentValue"] = f"{bound_agent}{MODEL_NAMESPACE_SEP}{current}"
+            opt["currentValue"] = _prefix(current)
     for entry in iter_model_choice_dicts(result):
         ident = entry.get("id") or entry.get("value")
         if not isinstance(ident, str) or MODEL_NAMESPACE_SEP in ident:
             continue
-        prefixed = f"{bound_agent}{MODEL_NAMESPACE_SEP}{ident}"
+        prefixed = _prefix(ident)
         if "id" in entry:
             entry["id"] = prefixed
         if "value" in entry:
             entry["value"] = prefixed
+
+    models = result.get("models")
+    if isinstance(models, dict):
+        current = models.get("currentModelId")
+        if isinstance(current, str) and MODEL_NAMESPACE_SEP not in current:
+            models["currentModelId"] = _prefix(current)
+        for entry in models.get("availableModels") or []:
+            if not isinstance(entry, dict):
+                continue
+            mid = entry.get("modelId")
+            if isinstance(mid, str) and MODEL_NAMESPACE_SEP not in mid:
+                entry["modelId"] = _prefix(mid)

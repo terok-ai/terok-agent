@@ -142,7 +142,13 @@ class TestSessionNew:
         assert responses[1]["result"]["sessionId"] == "proxy-1"
 
     def test_aggregates_namespaced_model_options(self) -> None:
-        """Every available ``agent:model`` appears in the configOption."""
+        """Every available ``agent:model`` appears in both ``models`` and ``configOptions``.
+
+        Modern ACP carries the picker in ``result.models`` as well as in
+        the structured ``configOptions``; clients (Zed) consume the
+        former.  Cover both surfaces so a regression to the old
+        ``select.options`` shape fails the test.
+        """
         responses = asyncio.run(
             _run_proxy(
                 available=["claude:opus-4.6", "codex:gpt-5.5"],
@@ -152,10 +158,21 @@ class TestSessionNew:
                 ],
             )
         )
-        config_options = responses[1]["result"]["configOptions"]
+        result = responses[1]["result"]
+
+        config_options = result["configOptions"]
         model_opt = next(opt for opt in config_options if opt["category"] == "model")
-        ids = [entry["id"] for entry in model_opt["select"]["options"]]
-        assert ids == ["claude:opus-4.6", "codex:gpt-5.5"]
+        assert model_opt["type"] == "select"
+        values = [entry["value"] for entry in model_opt["options"]]
+        assert values == ["claude:opus-4.6", "codex:gpt-5.5"]
+        assert model_opt["currentValue"] == "claude:opus-4.6"
+
+        models = result["models"]
+        assert [m["modelId"] for m in models["availableModels"]] == [
+            "claude:opus-4.6",
+            "codex:gpt-5.5",
+        ]
+        assert models["currentModelId"] == "claude:opus-4.6"
 
     def test_rejects_second_session_new(self) -> None:
         """v1 supports one session per connection — second call errors."""
@@ -244,16 +261,15 @@ class TestModelOptionRewriter:
                 "configOptions": [
                     {
                         "category": "model",
-                        "select": {
-                            "options": [{"id": "opus-4.6"}, {"id": "haiku-4.5"}],
-                        },
+                        "type": "select",
+                        "options": [{"value": "opus-4.6"}, {"value": "haiku-4.5"}],
                     }
                 ]
             }
         }
         _rewrite_model_options_in_place(frame, "claude")
-        ids = [e["id"] for e in frame["result"]["configOptions"][0]["select"]["options"]]
-        assert ids == ["claude:opus-4.6", "claude:haiku-4.5"]
+        values = [e["value"] for e in frame["result"]["configOptions"][0]["options"]]
+        assert values == ["claude:opus-4.6", "claude:haiku-4.5"]
 
     def test_skips_already_namespaced_ids(self) -> None:
         """Ids already containing the separator are left untouched."""
@@ -262,14 +278,15 @@ class TestModelOptionRewriter:
                 "configOptions": [
                     {
                         "category": "model",
-                        "select": {"options": [{"id": "claude:opus-4.6"}]},
+                        "type": "select",
+                        "options": [{"value": "claude:opus-4.6"}],
                     }
                 ]
             }
         }
         _rewrite_model_options_in_place(frame, "claude")
-        ids = [e["id"] for e in frame["result"]["configOptions"][0]["select"]["options"]]
-        assert ids == ["claude:opus-4.6"]
+        values = [e["value"] for e in frame["result"]["configOptions"][0]["options"]]
+        assert values == ["claude:opus-4.6"]
 
     def test_non_model_categories_untouched(self) -> None:
         """Mode and other categories are not rewritten."""
@@ -278,25 +295,55 @@ class TestModelOptionRewriter:
                 "configOptions": [
                     {
                         "category": "mode",
-                        "select": {"options": [{"id": "ask"}]},
+                        "type": "select",
+                        "options": [{"value": "ask"}],
                     }
                 ]
             }
         }
-        before = {"id": "ask"}
+        before = {"value": "ask"}
         _rewrite_model_options_in_place(frame, "claude")
-        after = frame["result"]["configOptions"][0]["select"]["options"][0]
+        after = frame["result"]["configOptions"][0]["options"][0]
         assert after == before
+
+    def test_prefixes_models_block_too(self) -> None:
+        """``models.availableModels[].modelId`` and ``models.currentModelId`` get prefixed.
+
+        Modern ACP responses carry the picker in ``result.models``;
+        without prefixing it, the client would see bare ids in the
+        picker but be required to send namespaced ids back, which the
+        proxy then wouldn't recognise.
+        """
+        frame = {
+            "result": {
+                "models": {
+                    "availableModels": [
+                        {"modelId": "opus-4.6"},
+                        {"modelId": "claude:haiku-4.5"},
+                    ],
+                    "currentModelId": "opus-4.6",
+                }
+            }
+        }
+        _rewrite_model_options_in_place(frame, "claude")
+        models = frame["result"]["models"]
+        assert [m["modelId"] for m in models["availableModels"]] == [
+            "claude:opus-4.6",
+            "claude:haiku-4.5",
+        ]
+        assert models["currentModelId"] == "claude:opus-4.6"
 
 
 class TestSmallHelpers:
     """The shape-builder helpers."""
 
-    def test_build_model_config_option_select_shape(self) -> None:
-        """The proxy emits a select-shaped option."""
-        opt = _build_model_config_option(["claude:opus-4.6"])
+    def test_build_model_config_option_modern_shape(self) -> None:
+        """The proxy emits the modern flat-options ``type: "select"`` shape."""
+        opt = _build_model_config_option(["claude:opus-4.6"], current="claude:opus-4.6")
         assert opt["category"] == "model"
-        assert opt["select"]["options"][0]["id"] == "claude:opus-4.6"
+        assert opt["type"] == "select"
+        assert opt["options"][0]["value"] == "claude:opus-4.6"
+        assert opt["currentValue"] == "claude:opus-4.6"
 
     def test_humanise_model_id(self) -> None:
         """The label format is ``Agent — model``."""
