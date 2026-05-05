@@ -33,15 +33,102 @@ def _make_roster(
 ) -> ACPRoster:
     """Build an :class:`ACPRoster` with a fresh cache by default.
 
-    No auth-source injection: the roster doesn't gate probing on
-    credentials anymore — successful probes are the source of truth.
+    Pre-populates the ``acp_capable_agents`` cached_property from the
+    configured agents list so tests don't have to mock the in-container
+    ``command -v`` check that the production roster runs once at first
+    use.  Real deployments need that check (the image label includes
+    tools like gh/glab/sonar that don't ship an ACP wrapper); unit
+    tests just want to exercise the cache + probe pipeline against
+    every configured agent.
     """
-    return ACPRoster(
+    roster = ACPRoster(
         container_name="c1",
         image_id=image_id,
         sandbox=sandbox,
         cache=cache if cache is not None else AgentRosterCache(),
     )
+    # ``cached_property`` stores in ``__dict__`` on first access; pre-
+    # filling it avoids the in-container exec the production check makes.
+    roster.__dict__["acp_capable_agents"] = roster.configured_agents
+    return roster
+
+
+class TestAcpCapableAgents:
+    """Wrapper-existence filter on top of ``configured_agents``."""
+
+    def _make_runtime(
+        self, *, agents_csv: str, present_wrappers: tuple[str, ...]
+    ) -> tuple[NullRuntime, Sandbox]:
+        """Build a NullRuntime that reports *present_wrappers* as installed.
+
+        The roster runs ``bash -c '...command -v terok-X-acp ... && echo X...'``
+        once to build the capable-agents whitelist; the registered
+        ``ExecResult`` returns the agents we want to keep.
+        """
+        from terok_sandbox.runtime.protocol import ExecResult
+
+        rt = NullRuntime()
+        rt.add_image(
+            "img-test",
+            repository="terok-l1",
+            tag="test",
+            labels={"ai.terok.agents": agents_csv},
+        )
+        # Build the same script the roster builds, so the key matches.
+        agents = [a.strip() for a in agents_csv.split(",") if a.strip()]
+        script = "; ".join(
+            f"command -v 'terok-{a}-acp' >/dev/null 2>&1 && echo {a}" for a in agents
+        )
+        rt.set_exec_result(
+            "c1",
+            ("bash", "-c", script),
+            ExecResult(exit_code=0, stdout="\n".join(present_wrappers), stderr=""),
+        )
+        return rt, Sandbox(config=SandboxConfig(), runtime=rt)
+
+    def test_filters_to_agents_with_a_wrapper(self) -> None:
+        """Agents whose wrapper is missing in the container are dropped."""
+        _rt, sandbox = self._make_runtime(
+            agents_csv="claude,gh,sonar,opencode",
+            present_wrappers=("claude", "opencode"),
+        )
+        # Don't go through ``_make_roster`` — we want the real
+        # ``acp_capable_agents`` to run, not the test pre-fill.
+        roster = ACPRoster(
+            container_name="c1",
+            image_id="img-test",
+            sandbox=sandbox,
+            cache=AgentRosterCache(),
+        )
+        assert roster.acp_capable_agents == ("claude", "opencode")
+
+    def test_falls_back_to_full_list_on_check_failure(self) -> None:
+        """If the in-container check raises, all configured agents are kept.
+
+        Conservative fallback: better to probe everything (paying the
+        timeout cost once per agent) than silently hide the picker.
+        """
+
+        class _ExecRaises(NullRuntime):
+            def exec(self, container, cmd, *, timeout=None):  # type: ignore[no-untyped-def]
+                """Raise so the roster falls back to the unfiltered list."""
+                raise RuntimeError("simulated container exec failure")
+
+        rt = _ExecRaises()
+        rt.add_image(
+            "img-test",
+            repository="terok-l1",
+            tag="test",
+            labels={"ai.terok.agents": "claude,gh"},
+        )
+        sandbox = Sandbox(config=SandboxConfig(), runtime=rt)
+        roster = ACPRoster(
+            container_name="c1",
+            image_id="img-test",
+            sandbox=sandbox,
+            cache=AgentRosterCache(),
+        )
+        assert roster.acp_capable_agents == ("claude", "gh")
 
 
 class TestConfiguredAgents:

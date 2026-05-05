@@ -121,6 +121,58 @@ class ACPRoster:
         raw = image.labels().get(AGENTS_LABEL, "")
         return tuple(token for token in (s.strip() for s in raw.split(",")) if token)
 
+    @cached_property
+    def acp_capable_agents(self) -> tuple[str, ...]:
+        """Subset of ``configured_agents`` that ship a ``terok-{agent}-acp`` wrapper.
+
+        The image label lists every agent in the runtime — claude,
+        opencode, gh, sonar, blablador, etc.  Of those, only the
+        ones that actually install an ACP wrapper script (currently
+        claude, codex, copilot, opencode, vibe) can be probed by the
+        proxy; the rest are tools or LLM gateways that don't speak
+        the protocol at all.  Probing them anyway costs a full
+        ``probe_timeout`` per agent for nothing — and worse, leaves
+        their wrappers as zombie subprocess threads in the executor
+        pool until exec_stdio's own timeout kills them.
+
+        Resolved by a single in-container shell call at first use
+        (``command -v`` is built-in to bash, near-zero cost).  The
+        property is cached for the roster's lifetime; new wrappers
+        installed mid-task aren't picked up without a daemon restart.
+        """
+        agents = self.configured_agents
+        if not agents:
+            return ()
+        # One ``bash -c`` exec instead of N — the latency is dominated
+        # by ``podman exec`` round-trip, so coalescing matters.
+        # ``command -v`` prints the resolved path on success and
+        # silently fails on missing; we echo the agent name only on
+        # success so the result is a newline-separated whitelist.
+        script = "; ".join(
+            f"command -v 'terok-{agent}-acp' >/dev/null 2>&1 && echo {agent}" for agent in agents
+        )
+        try:
+            result = self._sandbox.runtime.exec(
+                self._sandbox.runtime.container(self._container_name),
+                ["bash", "-c", script],
+                timeout=5.0,
+            )
+        except Exception as exc:  # noqa: BLE001
+            _logger.warning(
+                "ACP roster: wrapper-existence check failed: %s — falling back to full list",
+                exc,
+            )
+            return agents
+        present = {line.strip() for line in result.stdout.splitlines() if line.strip()}
+        kept = tuple(a for a in agents if a in present)
+        skipped = tuple(a for a in agents if a not in present)
+        if skipped:
+            _logger.info(
+                "ACP roster: skipping agents without an ACP wrapper: %s",
+                ", ".join(skipped),
+            )
+        return kept
+
     # ── Domain operations ────────────────────────────────────────────
 
     async def list_available_agents(self) -> list[str]:
@@ -137,7 +189,7 @@ class ACPRoster:
         recover on the next ``session/new`` instead of wedging the
         roster empty until the daemon restarts.
         """
-        agents_in_order = self.configured_agents
+        agents_in_order = self.acp_capable_agents
         cold = [a for a in agents_in_order if self._cache.get(self._cache_key(a)) is None]
         if cold:
             await asyncio.gather(*(self.warm(a) for a in cold))
@@ -184,25 +236,18 @@ class ACPRoster:
         proxy = ACPProxy(roster=self)
         await proxy.run(reader, writer)
 
-    def exec_wrapper(
-        self,
-        agent_id: str,
-        *,
-        stdin: object,
-        stdout: object,
-        stderr: object | None = None,
-    ) -> int:
+    def exec_wrapper(self, agent_id: str, *, stdin: object, stdout: object) -> int:
         """Run ``terok-{agent_id}-acp`` in the task container with bridged stdio.
 
         The proxy spawns backends through this method so the sandbox
         and container handles stay private to the roster.  Sync because
         :meth:`Sandbox.runtime.exec_stdio` is sync — callers in async
         contexts wrap the call in ``loop.run_in_executor``.
-        *stdin* / *stdout* / *stderr* are the host-side ends of
-        ``os.pipe()`` pairs, typed as :class:`BinaryIO`.  Pass *stderr*
-        when you want the wrapper's stderr surfaced (the bind path
-        does, the probe doesn't — its failures already log a useful
-        message at the JSON-RPC layer).
+        Stderr is left at exec_stdio's default (DEVNULL); capturing it
+        through a long-lived pipe was the structural difference between
+        bind (hung) and probe (worked) while debugging the silent-bind
+        regression — keep it off here and reach for an ad-hoc invocation
+        if you ever need to inspect a wrapper's stderr directly.
         """
         runtime = self._sandbox.runtime
         return runtime.exec_stdio(
@@ -210,7 +255,6 @@ class ACPRoster:
             [f"terok-{agent_id}-acp"],
             stdin=stdin,
             stdout=stdout,
-            stderr=stderr,
         )
 
     # ── Lower-level operations ───────────────────────────────────────
