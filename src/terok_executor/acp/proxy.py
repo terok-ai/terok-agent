@@ -64,10 +64,16 @@ if TYPE_CHECKING:
 
 _logger = logging.getLogger(__name__)
 
-PROXY_REQUEST_ID_PREFIX = "px-"
-"""Prefix for JSON-RPC request ids the proxy injects (replay of
-``initialize``/``session/new`` to the backend).  Strings can't collide
-with the int ids ACP clients typically use."""
+PROXY_REQUEST_ID_BASE = 1_000_000_000
+"""Numeric offset for JSON-RPC ids the proxy injects (replay of
+``initialize``/``session/new`` to the backend).  Stays integer so the
+backend's id-comparison code path matches the one it took during
+probe — claude-agent-acp (and likely other Node-side ACP servers)
+silently dropped string ids in practice, leaving the bind handshake
+hung waiting for a response.  ``1e9`` is well clear of any client
+counter we've seen but still inside JS's safe-integer range, and the
+proxy disambiguates its own ids by *membership* in
+:attr:`_pending_proxy_responses` rather than by numeric range."""
 
 JSONRPC_INVALID_REQUEST = -32600
 JSONRPC_INVALID_PARAMS = -32602
@@ -104,7 +110,7 @@ class ACPProxy:
         self._backend_stderr_pump_task: asyncio.Task | None = None
         self._backend_stderr_buffer: bytearray = bytearray()
         self._proxy_request_counter = 0
-        self._pending_proxy_responses: dict[str, asyncio.Future] = {}
+        self._pending_proxy_responses: dict[int, asyncio.Future] = {}
         self._closed = False
 
     async def run(
@@ -618,10 +624,15 @@ class ACPProxy:
                 continue
             _logger.debug("← backend: %s", _summarise_frame(frame))
 
-            # Drop responses to the proxy's own probe/replay frames;
-            # they're consumed by ``_await_proxy_response``.
+            # Drop responses to the proxy's own replay-handshake
+            # frames; they're consumed by ``_proxy_request``'s parked
+            # future, never forwarded to the client.  Discriminate by
+            # *membership* in the pending dict so we don't have to
+            # encode "this is a proxy id" into the frame itself —
+            # avoids the bug where some backends silently dropped
+            # string ids that we'd previously used as a marker.
             frame_id = frame.get("id")
-            if isinstance(frame_id, str) and frame_id.startswith(PROXY_REQUEST_ID_PREFIX):
+            if isinstance(frame_id, int) and frame_id in self._pending_proxy_responses:
                 self._deliver_proxy_response(frame_id, frame)
                 continue
 
@@ -684,7 +695,7 @@ class ACPProxy:
         ``error`` payloads, or backend disconnect during the wait.
         """
         self._proxy_request_counter += 1
-        frame_id = f"{PROXY_REQUEST_ID_PREFIX}{self._proxy_request_counter}"
+        frame_id = PROXY_REQUEST_ID_BASE + self._proxy_request_counter
         future: asyncio.Future = asyncio.get_running_loop().create_future()
         self._pending_proxy_responses[frame_id] = future
         try:
@@ -704,7 +715,7 @@ class ACPProxy:
             raise AgentBindError(f"backend rejected proxy {method!r}: {response['error']}")
         return response
 
-    def _deliver_proxy_response(self, frame_id: str, frame: dict[str, Any]) -> None:
+    def _deliver_proxy_response(self, frame_id: int, frame: dict[str, Any]) -> None:
         """Resolve the future awaiting the response with id *frame_id*."""
         pending = self._pending_proxy_responses.pop(frame_id, None)
         if pending is not None and not pending.done():
