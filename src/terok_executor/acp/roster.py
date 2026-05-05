@@ -22,8 +22,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import Callable
-from dataclasses import dataclass
 from functools import cached_property
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -54,22 +52,6 @@ process-wide credential set.  Mirrors what
 :func:`terok_executor.credentials.auth.authenticate` writes."""
 
 
-@dataclass(frozen=True)
-class _AgentMatrix:
-    """Outcome of a live walk of the image's agents and the credential DB.
-
-    Kept private — callers consume :meth:`ACPRoster.list_available_agents`
-    instead.  Stored as a record so the proxy can ask "is agent X
-    authenticated?" without re-querying the DB.
-    """
-
-    configured: tuple[str, ...]
-    """Agents declared in the image's ``ai.terok.agents`` label."""
-
-    authenticated: frozenset[str]
-    """Subset of *configured* with credentials in the vault."""
-
-
 def list_authenticated_agents(
     *,
     db_path: Path | None = None,
@@ -78,8 +60,11 @@ def list_authenticated_agents(
     """Return provider names that have stored credentials in *scope*.
 
     Pure query against :class:`terok_sandbox.CredentialDB` — no probing,
-    no container exec.  Used by :class:`ACPRoster` and by the host-side
-    ``acp list`` to classify endpoints as ``ready`` vs ``unsupported``.
+    no container exec.  Used by the host-side ``acp list`` to classify
+    endpoints in its status display; the roster itself doesn't gate
+    probing on this anymore (file-based auth like Claude's OAuth lives
+    outside the vault, so a vault-only filter would silently hide
+    working agents).
     """
     path = db_path or SandboxConfig().db_path
     db = CredentialDB(path)
@@ -89,25 +74,19 @@ def list_authenticated_agents(
         db.close()
 
 
-def _default_auth_source(scope: str) -> list[str]:
-    """The default ``auth_source`` :class:`ACPRoster` uses — wraps the DB.
-
-    A free function so tests can inject any ``Callable[[str], list[str]]``
-    via the constructor without monkey-patching this module.
-    """
-    return list_authenticated_agents(scope=scope)
-
-
 class ACPRoster:
     """Per-task ACP aggregator.
 
     Construct one per running task — the roster owns the per-agent
-    probe cache lookups, the live "who is authenticated right now?"
-    walk, and the attach loop that brokers a connected ACP client.
-
-    Heavy subsystems (sandbox handle, credential DB, agent label) are
-    resolved lazily so unit tests can exercise the roster without
-    actually opening a container.
+    probe cache lookups and the attach loop that brokers a connected
+    ACP client.  It probes every agent declared in the image's
+    ``ai.terok.agents`` label; failed probes (missing wrapper, no
+    credentials, agent crashed) cache empty so a misbehaving agent
+    doesn't get re-probed every ``session/new``.  The roster
+    deliberately does *not* consult the credential vault: that view
+    is incomplete (file-mounted creds aren't there) and the proxy
+    has nothing useful to do with the answer anyway — a probe that
+    succeeds is, by definition, an authed agent.
     """
 
     def __init__(
@@ -117,20 +96,16 @@ class ACPRoster:
         image_id: str,
         sandbox: Sandbox,
         auth_identity: str = DEFAULT_AUTH_IDENTITY,
-        credential_scope: str = DEFAULT_CREDENTIAL_SCOPE,
         cache: AgentRosterCache | None = None,
-        auth_source: Callable[[str], list[str]] | None = None,
     ) -> None:
         self._container_name = container_name
         self._image_id = image_id
         self._sandbox = sandbox
         self._auth_identity = auth_identity
-        self._credential_scope = credential_scope
         # Don't ``cache or GLOBAL_CACHE`` here — ``AgentRosterCache`` defines
         # ``__len__``, so an empty cache is falsy and would silently swap in
         # the global singleton.  Explicit ``is None`` check.
         self._cache = cache if cache is not None else GLOBAL_CACHE
-        self._auth_source: Callable[[str], list[str]] = auth_source or _default_auth_source
 
     # ── Lazy-init properties (mirrors AgentRunner) ─────────────────────
 
@@ -148,29 +123,19 @@ class ACPRoster:
 
     # ── Domain operations ────────────────────────────────────────────
 
-    def agent_matrix(self) -> _AgentMatrix:
-        """Return the live (configured, authenticated) snapshot for this task.
-
-        Cheap — one credential-DB query, no probing.  Recomputed on
-        every call so newly-authed agents are reflected immediately.
-        """
-        configured = self.configured_agents
-        authed = frozenset(self._auth_source(self._credential_scope)).intersection(configured)
-        return _AgentMatrix(configured=configured, authenticated=authed)
-
     async def list_available_agents(self) -> list[str]:
         """Return ``agent:model`` ids ready to surface to a client.
 
-        Walks configured agents, intersects with current auth, draws
-        models from the cache.  Cold-cache agents are probed in
-        parallel via :func:`asyncio.gather`, so first-call latency is
-        ``max(probe_time)`` rather than ``sum(probe_time)``.  Probe
-        failures cache an empty roster (so we don't hammer a
-        misconfigured agent every ``session/new``) and the agent is
-        silently skipped.
+        Probes every agent in the image's ``ai.terok.agents`` label
+        (filtered through the cache) and concatenates the namespaced
+        model ids of those that responded.  Cold-cache agents are
+        probed in parallel via :func:`asyncio.gather`, so first-call
+        latency is ``max(probe_time)`` rather than ``sum(probe_time)``.
+        Probe failures cache an empty roster — the agent is silently
+        skipped from the output and won't be re-probed for the
+        lifetime of the session.
         """
-        matrix = self.agent_matrix()
-        agents_in_order = [a for a in matrix.configured if a in matrix.authenticated]
+        agents_in_order = self.configured_agents
         cold = [a for a in agents_in_order if self._cache.get(self._cache_key(a)) is None]
         if cold:
             await asyncio.gather(*(self.warm(a) for a in cold))

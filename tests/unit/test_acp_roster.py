@@ -29,21 +29,18 @@ def _make_roster(
     sandbox: Sandbox,
     *,
     cache: AgentRosterCache | None = None,
-    authed: list[str] | None = None,
     image_id: str = "img-test",
 ) -> ACPRoster:
-    """Build an :class:`ACPRoster` with an injected auth source.
+    """Build an :class:`ACPRoster` with a fresh cache by default.
 
-    The injected callable replaces the real credential-DB lookup so
-    tests don't need a sqlite file.  Returning the roster ready to use
-    keeps test bodies focused on assertions, not setup.
+    No auth-source injection: the roster doesn't gate probing on
+    credentials anymore — successful probes are the source of truth.
     """
     return ACPRoster(
         container_name="c1",
         image_id=image_id,
         sandbox=sandbox,
         cache=cache if cache is not None else AgentRosterCache(),
-        auth_source=lambda _scope: list(authed or []),
     )
 
 
@@ -70,10 +67,10 @@ class TestConfiguredAgents:
 
 
 class TestListAvailableAgents:
-    """Live walk: configured ∩ authenticated, then namespace from cache."""
+    """Cache-driven walk over every configured agent."""
 
-    def test_returns_namespaced_models_for_authed_agents(self) -> None:
-        """Authenticated agents emit ``agent:model`` ids from the cache."""
+    def test_returns_namespaced_models_from_cache(self) -> None:
+        """Cached agents emit ``agent:model`` ids in image-label order."""
         cache = AgentRosterCache()
         cache.put(
             CacheKey(image_id="img-test", auth_identity="global", agent_id="claude"),
@@ -83,19 +80,20 @@ class TestListAvailableAgents:
             CacheKey(image_id="img-test", auth_identity="global", agent_id="codex"),
             ("gpt-5.5",),
         )
-        roster = _make_roster(
-            _build_sandbox_with_image("claude,codex"),
-            cache=cache,
-            authed=["claude", "codex"],
-        )
+        roster = _make_roster(_build_sandbox_with_image("claude,codex"), cache=cache)
         assert asyncio.run(roster.list_available_agents()) == [
             "claude:opus-4.6",
             "claude:haiku-4.5",
             "codex:gpt-5.5",
         ]
 
-    def test_filters_unauthenticated_agents(self) -> None:
-        """Configured but un-authed agents are dropped — even if cached."""
+    def test_empty_probe_result_is_silently_skipped(self) -> None:
+        """An agent whose cache entry is empty contributes no rows.
+
+        The cache stores empty tuples for failed/unauthed probes so
+        we don't re-probe; the output skips them so an unauthed agent
+        doesn't show up as a no-models row in the picker.
+        """
         cache = AgentRosterCache()
         cache.put(
             CacheKey(image_id="img-test", auth_identity="global", agent_id="claude"),
@@ -103,23 +101,15 @@ class TestListAvailableAgents:
         )
         cache.put(
             CacheKey(image_id="img-test", auth_identity="global", agent_id="codex"),
-            ("gpt-5.5",),
+            (),
         )
-        roster = _make_roster(
-            _build_sandbox_with_image("claude,codex"),
-            cache=cache,
-            authed=["claude"],
-        )
+        roster = _make_roster(_build_sandbox_with_image("claude,codex"), cache=cache)
         assert asyncio.run(roster.list_available_agents()) == ["claude:opus-4.6"]
 
     def test_cache_miss_triggers_warm(self) -> None:
-        """An authed agent without cache entries calls warm() once."""
+        """A cold-cache agent calls warm() once, then its cache entry feeds the output."""
         cache = AgentRosterCache()
-        roster = _make_roster(
-            _build_sandbox_with_image("claude"),
-            cache=cache,
-            authed=["claude"],
-        )
+        roster = _make_roster(_build_sandbox_with_image("claude"), cache=cache)
         warm_calls: list[str] = []
 
         async def _fake_warm(agent_id: str) -> tuple[str, ...]:
@@ -138,11 +128,7 @@ class TestListAvailableAgents:
     def test_cold_probes_run_in_parallel(self) -> None:
         """Multiple cold-cache agents probe concurrently, not sequentially."""
         cache = AgentRosterCache()
-        roster = _make_roster(
-            _build_sandbox_with_image("claude,codex,vibe"),
-            cache=cache,
-            authed=["claude", "codex", "vibe"],
-        )
+        roster = _make_roster(_build_sandbox_with_image("claude,codex,vibe"), cache=cache)
         active: set[str] = set()
         max_active = 0
 
@@ -164,22 +150,10 @@ class TestListAvailableAgents:
         # at the same time; sequential would top out at 1.
         assert max_active >= 2
 
-    def test_no_authed_agents_yields_empty_list(self) -> None:
-        """Task with no authed agents surfaces no models — caller turns
-        this into the ``unsupported`` endpoint status."""
-        roster = _make_roster(_build_sandbox_with_image("claude"), authed=[])
+    def test_image_with_no_agents_yields_empty_list(self) -> None:
+        """An image without the agents label surfaces no models."""
+        rt = NullRuntime()
+        rt.add_image("img-bare", labels={})
+        sandbox = Sandbox(config=SandboxConfig(), runtime=rt)
+        roster = _make_roster(sandbox, image_id="img-bare")
         assert asyncio.run(roster.list_available_agents()) == []
-
-
-class TestAgentMatrix:
-    """The (configured, authenticated) snapshot used by host-side discovery."""
-
-    def test_matrix_intersects_configured_and_authed(self) -> None:
-        """Authenticated agents not configured in the image are excluded."""
-        roster = _make_roster(
-            _build_sandbox_with_image("claude,codex"),
-            authed=["claude", "vibe"],  # vibe authed but not in image
-        )
-        matrix = roster.agent_matrix()
-        assert matrix.configured == ("claude", "codex")
-        assert matrix.authenticated == frozenset({"claude"})
