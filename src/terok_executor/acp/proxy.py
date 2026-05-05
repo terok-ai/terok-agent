@@ -36,6 +36,20 @@ import logging
 import os
 from typing import TYPE_CHECKING, Any
 
+from acp import (
+    PROTOCOL_VERSION as ACP_PROTOCOL_VERSION,
+    InitializeResponse,
+    NewSessionResponse,
+)
+from acp.schema import (
+    Implementation,
+    ModelInfo,
+    SessionConfigOptionSelect,
+    SessionConfigSelectOption,
+    SessionModelState,
+    SetSessionConfigOptionResponse,
+)
+
 from .model_options import (
     MODEL_NAMESPACE_SEP,
     MODEL_OPTION_CATEGORY,
@@ -46,10 +60,6 @@ if TYPE_CHECKING:
     from .roster import ACPRoster
 
 _logger = logging.getLogger(__name__)
-
-ACP_PROTOCOL_VERSION = 1
-"""Version this proxy advertises on ``initialize``.  Mirrors what the
-probe sends; in practice both backends and clients negotiate down."""
 
 PROXY_REQUEST_ID_PREFIX = "px-"
 """Prefix for JSON-RPC request ids the proxy injects (replay of
@@ -146,23 +156,26 @@ class ACPProxy:
     async def _handle_initialize(self, frame: dict[str, Any]) -> None:
         """Answer ``initialize`` locally with aggregated capabilities.
 
-        v1 advertises a minimal capability set — the proxy does not
-        modify the protocol version negotiation downstream.  When a
-        backend is later bound, its capabilities may differ; clients
-        should treat the proxy's caps as a conservative intersection.
+        Built via the ACP SDK's pydantic model so missing-or-misnamed
+        fields fail at construction with a precise traceback rather
+        than at the client end with "failed to deserialize".  The
+        capability defaults from :class:`acp.schema.AgentCapabilities`
+        are conservative — clients should treat the proxy's caps as a
+        floor; the bound backend's are the real ceiling.
         """
+        result = InitializeResponse(
+            protocol_version=ACP_PROTOCOL_VERSION,
+            agent_info=Implementation(
+                name="terok-acp",
+                title="Terok ACP host-proxy",
+                version="1",
+            ),
+        )
         await self._send_to_client(
             {
                 "jsonrpc": "2.0",
                 "id": frame.get("id"),
-                "result": {
-                    "protocolVersion": ACP_PROTOCOL_VERSION,
-                    "agentCapabilities": {
-                        "promptCapabilities": {},
-                        "loadSession": False,
-                    },
-                    "authMethods": [],
-                },
+                "result": result.model_dump(by_alias=True, exclude_none=True, mode="json"),
             }
         )
 
@@ -192,17 +205,12 @@ class ACPProxy:
 
         self._client_session_id = "proxy-1"
         models = await self._roster.list_available_agents()
-        current = models[0] if models else None
+        result = _build_session_new_response(self._client_session_id, models)
         await self._send_to_client(
             {
                 "jsonrpc": "2.0",
                 "id": frame.get("id"),
-                "result": {
-                    "sessionId": self._client_session_id,
-                    "models": _build_models_block(models),
-                    "modes": {"currentModeId": None, "availableModes": []},
-                    "configOptions": [_build_model_config_option(models, current=current)],
-                },
+                "result": result.model_dump(by_alias=True, exclude_none=True, mode="json"),
             }
         )
 
@@ -319,20 +327,14 @@ class ACPProxy:
         bound_models = await self._roster.list_available_agents()
         collapsed = [m for m in bound_models if m.startswith(f"{agent_id}{MODEL_NAMESPACE_SEP}")]
         current = f"{agent_id}{MODEL_NAMESPACE_SEP}{model_id}"
+        result = SetSessionConfigOptionResponse(
+            config_options=[_build_model_config_option(collapsed, current=current)],
+        )
         await self._send_to_client(
             {
                 "jsonrpc": "2.0",
                 "id": client_frame.get("id"),
-                "result": {
-                    "models": {
-                        "availableModels": [
-                            {"modelId": m, "name": _humanise_model_id(m)} for m in collapsed
-                        ],
-                        "currentModelId": current,
-                    },
-                    "modes": {"currentModeId": None, "availableModes": []},
-                    "configOptions": [_build_model_config_option(collapsed, current=current)],
-                },
+                "result": result.model_dump(by_alias=True, exclude_none=True, mode="json"),
             }
         )
 
@@ -601,44 +603,54 @@ class ACPProxy:
 def _build_model_config_option(
     namespaced_models: list[str],
     *,
-    current: str | None = None,
-) -> dict[str, Any]:
-    """Build a ``category: "model"`` configOption advertising *namespaced_models*.
+    current: str,
+) -> SessionConfigOptionSelect:
+    """Build a ``category: "model"`` ``select`` configOption.
 
-    Matches the ACP schema as emitted by ``@agentclientprotocol/claude-agent-acp``
-    (and consumed by Zed): flat ``options`` array with ``value`` keys,
-    plus the ``type: "select"`` discriminator and ``name`` /
-    ``description`` fields.  Earlier nested ``select.options`` shape
-    fails Zed's deserialiser.
+    Returns the SDK pydantic model (not a dict) so the caller can drop
+    it straight into a :class:`NewSessionResponse` /
+    :class:`SetSessionConfigOptionResponse`.  ``current`` is required
+    by the schema (``current_value`` is a non-nullable ``str``); the
+    caller is expected to handle the empty-models case by skipping
+    the option entirely rather than passing a placeholder.
     """
-    return {
-        "id": "model",
-        "name": "Model",
-        "description": "AI model to use",
-        "category": MODEL_OPTION_CATEGORY,
-        "type": "select",
-        "currentValue": current,
-        "options": [
-            {"value": ident, "name": _humanise_model_id(ident)} for ident in namespaced_models
+    return SessionConfigOptionSelect(
+        id="model",
+        name="Model",
+        type="select",
+        description="AI model to use",
+        category=MODEL_OPTION_CATEGORY,
+        current_value=current,
+        options=[
+            SessionConfigSelectOption(value=ident, name=_humanise_model_id(ident))
+            for ident in namespaced_models
         ],
-    }
+    )
 
 
-def _build_models_block(namespaced_models: list[str]) -> dict[str, Any]:
-    """Build the top-level ``models`` block of a ``session/new`` result.
+def _build_session_new_response(session_id: str, models: list[str]) -> NewSessionResponse:
+    """Construct the pre-bind ``session/new`` reply for *models*.
 
-    Modern ACP carries the model picker in ``result.models`` (using
-    ``modelId`` keys) in addition to the structured ``configOptions``;
-    Zed reads from there.  Defaults the current selection to the first
-    available agent's first model so a fresh session has something
-    selected to send a prompt to — clients otherwise refuse to start.
+    Splits the empty-models case so the response stays schema-valid:
+    when no agents probed successfully, the ``models`` block and the
+    model ``configOption`` are omitted entirely (both have non-nullable
+    required fields the proxy can't fill in for an empty list).  The
+    ``modes`` block is also omitted — :class:`SessionModeState` requires
+    a non-null ``current_mode_id`` and the proxy doesn't manage modes.
     """
-    return {
-        "availableModels": [
-            {"modelId": ident, "name": _humanise_model_id(ident)} for ident in namespaced_models
-        ],
-        "currentModelId": namespaced_models[0] if namespaced_models else None,
-    }
+    if not models:
+        return NewSessionResponse(session_id=session_id)
+    current = models[0]
+    return NewSessionResponse(
+        session_id=session_id,
+        models=SessionModelState(
+            available_models=[
+                ModelInfo(model_id=ident, name=_humanise_model_id(ident)) for ident in models
+            ],
+            current_model_id=current,
+        ),
+        config_options=[_build_model_config_option(models, current=current)],
+    )
 
 
 def _humanise_model_id(namespaced: str) -> str:

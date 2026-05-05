@@ -338,12 +338,13 @@ class TestSmallHelpers:
     """The shape-builder helpers."""
 
     def test_build_model_config_option_modern_shape(self) -> None:
-        """The proxy emits the modern flat-options ``type: "select"`` shape."""
+        """The helper returns an SDK pydantic model that serialises to the wire shape."""
         opt = _build_model_config_option(["claude:opus-4.6"], current="claude:opus-4.6")
-        assert opt["category"] == "model"
-        assert opt["type"] == "select"
-        assert opt["options"][0]["value"] == "claude:opus-4.6"
-        assert opt["currentValue"] == "claude:opus-4.6"
+        wire = opt.model_dump(by_alias=True, exclude_none=True, mode="json")
+        assert wire["category"] == "model"
+        assert wire["type"] == "select"
+        assert wire["options"][0]["value"] == "claude:opus-4.6"
+        assert wire["currentValue"] == "claude:opus-4.6"
 
     def test_humanise_model_id(self) -> None:
         """The label format is ``Agent — model``."""
