@@ -21,7 +21,7 @@ from terok_executor.acp.proxy import (
     _build_model_config_option,
     _humanise_model_id,
     _rewrite_model_options_in_place,
-    _with_params_value,
+    _with_params_field,
 )
 
 
@@ -189,10 +189,10 @@ class TestSessionNew:
         assert "error" in responses[2]
 
 
-class TestSetConfigOptionPreBind:
-    """``set_config_option`` parsing and rejection paths before any bind."""
+class TestSetModelPreBind:
+    """``session/set_model`` parsing and rejection paths before any bind."""
 
-    def test_invalid_value_returns_jsonrpc_error(self) -> None:
+    def test_unnamespaced_model_id_returns_jsonrpc_error(self) -> None:
         """Non ``agent:model`` values are rejected with -32602."""
         responses = asyncio.run(
             _run_proxy(
@@ -201,19 +201,18 @@ class TestSetConfigOptionPreBind:
                     _frame("initialize", 1, protocolVersion=1),
                     _frame("session/new", 2, cwd="/workspace"),
                     _frame(
-                        "session/set_config_option",
+                        "session/set_model",
                         3,
                         sessionId="proxy-1",
-                        category="model",
-                        value="no-namespace",
+                        modelId="no-namespace",
                     ),
                 ],
             )
         )
         assert responses[2]["error"]["code"] == -32602
 
-    def test_non_model_category_pre_bind_errors(self) -> None:
-        """Pre-bind set_config_option for non-model categories is rejected."""
+    def test_set_config_option_pre_bind_errors(self) -> None:
+        """Pre-bind ``set_config_option`` (non-model knob) has no backend — error."""
         responses = asyncio.run(
             _run_proxy(
                 available=["claude:opus-4.6"],
@@ -224,8 +223,8 @@ class TestSetConfigOptionPreBind:
                         "session/set_config_option",
                         3,
                         sessionId="proxy-1",
-                        category="something-else",
-                        value="anything",
+                        configId="behavior",
+                        value="strict",
                     ),
                 ],
             )
@@ -354,12 +353,13 @@ class TestSmallHelpers:
         """Unrecognised ids are returned verbatim — no crash."""
         assert _humanise_model_id("plain") == "plain"
 
-    def test_with_params_value_replaces_value_and_keeps_others(self) -> None:
+    def test_with_params_field_replaces_named_field_and_keeps_others(self) -> None:
         """Helper does not mutate the input frame."""
-        frame = {"params": {"category": "model", "value": "claude:opus"}}
-        new = _with_params_value(frame, "opus")
-        assert new["params"]["value"] == "opus"
-        assert frame["params"]["value"] == "claude:opus"  # untouched
+        frame = {"params": {"sessionId": "proxy-1", "modelId": "claude:opus"}}
+        new = _with_params_field(frame, "modelId", "opus")
+        assert new["params"]["modelId"] == "opus"
+        assert new["params"]["sessionId"] == "proxy-1"
+        assert frame["params"]["modelId"] == "claude:opus"  # untouched
 
 
 @pytest.mark.parametrize(

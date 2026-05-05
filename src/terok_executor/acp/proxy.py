@@ -12,20 +12,23 @@ frames are re-serialised after parsing.
 Two phases drive the lifecycle:
 
 - **Pre-bind**: the proxy answers ``initialize`` and ``session/new``
-  locally, advertising the aggregated ``agent:model`` list as a
-  ``category: "model"`` configOption.  No backend process exists yet.
-- **Bound**: on the first ``session/set_config_option`` for the model
-  category, the proxy spawns the agent's wrapper script via
-  :meth:`Sandbox.runtime.exec_stdio`, replays
-  ``initialize`` + ``session/new`` + ``set_config_option`` to it, and
-  from then on bridges frames in both directions.  The option list is
-  rewritten on the way out so cross-agent values disappear from the
-  client's view.
+  locally, advertising the aggregated ``agent:model`` list in
+  :class:`acp.schema.SessionModelState` plus a mirroring
+  ``configOptions[category=model]``.  No backend process exists yet.
+- **Bound**: on the first ``session/set_model`` (modern ACP's
+  dedicated method for model selection), the proxy uses the
+  ``agent:`` namespace prefix to pick which in-container wrapper
+  to spawn via :meth:`Sandbox.runtime.exec_stdio`, replays
+  ``initialize`` + ``session/new`` + ``session/set_model`` (with
+  the bare sub-id) to it, and from then on bridges frames in both
+  directions.  Backend frames are mutated on the way out so model
+  ids visible to the client are namespaced again.
 
-V1 takes shortcuts where the design is still settling: one client per
-connection, one session per binding, no push notifications when the
-authed-agent set changes mid-connection.  All of these are tracked
-for v2.
+V1 takes shortcuts where the design is still settling: one session
+per connection (Zed reconnects on every chat — fix on the roadmap),
+one bound agent per session (no cross-agent switches without
+reconnect), no push notifications when the authed-agent set changes
+mid-connection.  All of these are tracked for v2.
 """
 
 from __future__ import annotations
@@ -47,7 +50,6 @@ from acp.schema import (
     SessionConfigOptionSelect,
     SessionConfigSelectOption,
     SessionModelState,
-    SetSessionConfigOptionResponse,
 )
 
 from .model_options import (
@@ -148,6 +150,8 @@ class ACPProxy:
             await self._handle_initialize(frame)
         elif method == "session/new":
             await self._handle_session_new(frame)
+        elif method == "session/set_model":
+            await self._handle_set_model(frame)
         elif method == "session/set_config_option":
             await self._handle_set_config_option(frame)
         else:
@@ -214,41 +218,39 @@ class ACPProxy:
             }
         )
 
-    async def _handle_set_config_option(self, frame: dict[str, Any]) -> None:
-        """Bind on first call; forward (with translation) on subsequent calls."""
+    async def _handle_set_model(self, frame: dict[str, Any]) -> None:
+        """Bind on first call; forward namespace-stripped on subsequent calls.
+
+        Modern ACP picks the model via :data:`session/set_model`.  The
+        proxy uses the namespace prefix in the ``modelId`` (e.g.
+        ``claude:opus-4.6``) to choose which in-container agent
+        wrapper to spawn, then replays the bare sub-id (``opus-4.6``)
+        on to that backend.  Subsequent same-agent switches forward
+        the bare id directly; cross-agent switches are rejected in
+        v1 (would tear down the backend and rebind, which we defer).
+        """
         raw_params = frame.get("params")
-        if raw_params is None:
-            params: dict[str, Any] = {}
-        elif isinstance(raw_params, dict):
-            params = raw_params
-        else:
+        if not isinstance(raw_params, dict):
             await self._reply_error(
                 frame.get("id"),
                 code=JSONRPC_INVALID_PARAMS,
                 message="params must be an object",
             )
             return
-        category = params.get("category")
-        value = params.get("value")
-        if category != MODEL_OPTION_CATEGORY or not isinstance(value, str):
-            # Non-model config option: forward to backend if bound, else
-            # reject — pre-bind we have no idea what valid config is.
-            if self._is_bound:
-                await self._forward_to_backend(frame)
-            else:
-                await self._reply_error(
-                    frame.get("id"),
-                    code=JSONRPC_INVALID_REQUEST,
-                    message="set_config_option pre-bind: only model selection is allowed",
-                )
+        namespaced = raw_params.get("modelId") or raw_params.get("model_id")
+        if not isinstance(namespaced, str):
+            await self._reply_error(
+                frame.get("id"),
+                code=JSONRPC_INVALID_PARAMS,
+                message="modelId must be a string",
+            )
             return
-
-        agent_id, _, model_id = value.partition(MODEL_NAMESPACE_SEP)
+        agent_id, _, model_id = namespaced.partition(MODEL_NAMESPACE_SEP)
         if not agent_id or not model_id:
             await self._reply_error(
                 frame.get("id"),
                 code=JSONRPC_INVALID_PARAMS,
-                message=f"model id must be 'agent:model', got {value!r}",
+                message=f"modelId must be 'agent:model', got {namespaced!r}",
             )
             return
 
@@ -264,14 +266,25 @@ class ACPProxy:
                 ),
             )
         else:
-            # Same agent, just changing model — strip the ``agent:`` prefix
-            # so the backend sees its own bare model id.  Session-id
-            # translation (``proxy-1`` → backend's id) is handled separately
-            # inside :meth:`_forward_to_backend`, so this call only rewrites
-            # ``params.value``.
-            await self._forward_to_backend(
-                _with_params_value(frame, model_id),
+            await self._forward_to_backend(_with_params_field(frame, "modelId", model_id))
+
+    async def _handle_set_config_option(self, frame: dict[str, Any]) -> None:
+        """Forward non-model config options to the backend.
+
+        Modern ACP separates :data:`session/set_model` (model selection,
+        the proxy's bind trigger) from :data:`session/set_config_option`
+        (other config knobs like behavior / safety / performance).
+        Pre-bind there's no backend to forward to, so the client is
+        nudged to pick a model first.
+        """
+        if not self._is_bound:
+            await self._reply_error(
+                frame.get("id"),
+                code=JSONRPC_INVALID_REQUEST,
+                message="no agent bound — pick a model via session/set_model first",
             )
+            return
+        await self._forward_to_backend(frame)
 
     async def _passthrough_to_backend(self, frame: dict[str, Any]) -> None:
         """Forward unrecognised methods to the bound backend, or reject pre-bind.
@@ -284,10 +297,7 @@ class ACPProxy:
             await self._reply_error(
                 frame.get("id"),
                 code=JSONRPC_INVALID_REQUEST,
-                message=(
-                    "no agent bound — pick a model via "
-                    "session/set_config_option before issuing this method"
-                ),
+                message="no agent bound — pick a model via session/set_model first",
             )
             return
         await self._forward_to_backend(frame)
@@ -301,11 +311,14 @@ class ACPProxy:
         agent_id: str,
         model_id: str,
     ) -> None:
-        """Spawn the backend wrapper and reply to the client's set_config_option.
+        """Spawn the backend wrapper and acknowledge the client's set_model.
 
-        On failure, sends a JSON-RPC error back to the client and leaves
-        the proxy unbound (the client may try again with a different
-        agent).
+        :data:`session/set_model`'s response shape is empty
+        (:class:`SetSessionModelResponse` carries no required fields),
+        so once the spawn + handshake succeed we just send back
+        ``result: {}``.  On failure, replies with a JSON-RPC error and
+        leaves the proxy unbound — the client may try again with a
+        different agent.
         """
         try:
             await self._spawn_backend(agent_id)
@@ -321,22 +334,7 @@ class ACPProxy:
             return
 
         self._bound_agent = agent_id
-        # Build the post-bind option list: namespaced ids, but only for
-        # the bound agent's models so the client can no longer see
-        # cross-agent options.
-        bound_models = await self._roster.list_available_agents()
-        collapsed = [m for m in bound_models if m.startswith(f"{agent_id}{MODEL_NAMESPACE_SEP}")]
-        current = f"{agent_id}{MODEL_NAMESPACE_SEP}{model_id}"
-        result = SetSessionConfigOptionResponse(
-            config_options=[_build_model_config_option(collapsed, current=current)],
-        )
-        await self._send_to_client(
-            {
-                "jsonrpc": "2.0",
-                "id": client_frame.get("id"),
-                "result": result.model_dump(by_alias=True, exclude_none=True, mode="json"),
-            }
-        )
+        await self._send_to_client({"jsonrpc": "2.0", "id": client_frame.get("id"), "result": {}})
 
     async def _spawn_backend(self, agent_id: str) -> None:
         """Start ``terok-{agent_id}-acp`` and connect asyncio pipes to it.
@@ -413,12 +411,8 @@ class ACPProxy:
         self._backend_session_id = backend_session_id
 
         await self._proxy_request(
-            "session/set_config_option",
-            {
-                "sessionId": backend_session_id,
-                "category": MODEL_OPTION_CATEGORY,
-                "value": model_id,
-            },
+            "session/set_model",
+            {"sessionId": backend_session_id, "modelId": model_id},
         )
 
     # ── Forwarding ────────────────────────────────────────────────────
@@ -661,10 +655,16 @@ def _humanise_model_id(namespaced: str) -> str:
     return f"{agent.capitalize()} — {model}"
 
 
-def _with_params_value(frame: dict[str, Any], new_value: Any) -> dict[str, Any]:
-    """Return a shallow-copied *frame* with ``params.value`` replaced."""
+def _with_params_field(frame: dict[str, Any], field_name: str, new_value: Any) -> dict[str, Any]:
+    """Return a shallow-copied *frame* with ``params[field_name]`` replaced.
+
+    Used to rewrite specific request params on the way to the backend
+    (e.g. strip the ``agent:`` namespace from ``modelId`` so the
+    backend sees its own bare ids).  Shallow copy is enough — the
+    proxy never mutates the inner ``params`` after writing.
+    """
     params = dict(frame.get("params") or {})
-    params["value"] = new_value
+    params[field_name] = new_value
     out = dict(frame)
     out["params"] = params
     return out
