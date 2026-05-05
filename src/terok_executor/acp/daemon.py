@@ -177,57 +177,43 @@ async def _run(
     return 0
 
 
-_WRITER_CLOSE_TIMEOUT_SEC = 2.0
-"""Cap on ``StreamWriter.wait_closed()`` — asyncio's transport sometimes
-fails to fire ``connection_lost`` on Unix-socket half-closes, which
-would otherwise leave the busy lock held forever and turn every
-subsequent client connection into a silent RST.  Two seconds is well
-past any normal close handshake; if we're still waiting after that,
-just release the lock and move on.
-"""
-
-
-async def _close_writer(writer: asyncio.StreamWriter) -> None:
-    """Close *writer* with a bounded ``wait_closed`` so we can't hang here.
-
-    Used in both branches of :func:`_make_handler` (busy-reject and the
-    normal teardown).  The timeout protects against a hung
-    ``wait_closed`` deadlocking the busy lock.
-    """
-    writer.close()
-    try:
-        await asyncio.wait_for(writer.wait_closed(), timeout=_WRITER_CLOSE_TIMEOUT_SEC)
-    except TimeoutError:
-        _logger.warning(
-            "proxy: writer.wait_closed() timed out after %.1fs; releasing lock anyway",
-            _WRITER_CLOSE_TIMEOUT_SEC,
-        )
-    except Exception as exc:  # noqa: BLE001
-        _logger.debug("proxy: writer close error: %s", exc)
-
-
 def _make_handler(roster: ACPRoster):
-    """Return an ``asyncio.start_unix_server`` callback bound to *roster*."""
-    busy = asyncio.Lock()
+    """Return an ``asyncio.start_unix_server`` callback bound to *roster*.
+
+    No daemon-level concurrency lock: the previous v1 single-client
+    guard used an :class:`asyncio.Lock` plus ``writer.wait_closed()``,
+    but the liveness probe in :func:`acp_socket_is_live` (the same
+    one ``terok acp connect``'s ``_wait_for_socket`` calls before
+    bridging) opens and immediately closes a real socket connection.
+    That connection runs through the handler too and ends with
+    ``wait_closed()`` — which doesn't always fire its
+    ``connection_lost`` callback on Unix-socket half-closes — so the
+    lock would stay held and the *real* bridge client got reject-and-
+    RST.  Each connection now gets its own :class:`ACPProxy` and runs
+    independently; concurrent ACP clients are unusual in practice
+    and would only race over the backend agent, which the proxy's
+    own ``_client_session_id`` check already rejects at the protocol
+    level.
+    """
 
     async def _handler(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
         """Per-connection handler — runs the proxy attach loop for one client."""
-        # v1 = one client per socket.  Reject overlap with a clean close
-        # so the second client sees an immediate disconnect instead of
-        # racing on the proxy's session state.
-        if busy.locked():
-            await _close_writer(writer)
-            return
-        async with busy:
+        try:
+            await roster.attach(reader, writer)
+        except Exception:
+            # Attach-loop crashes are bugs, not "expected" disconnect
+            # paths — surface with traceback at error level so the
+            # daemon log makes the cause obvious.
+            _logger.exception("proxy: attach loop crashed")
+        finally:
+            # Fire-and-forget close: ``wait_closed`` can hang on Unix-
+            # socket half-closes (the bug that motivated removing the
+            # outer lock), and we have nothing to wait for here — the
+            # proxy already ``drain``'d every ``_send_to_client`` call.
             try:
-                await roster.attach(reader, writer)
-            except Exception:
-                # Attach-loop crashes are bugs, not "expected" disconnect
-                # paths — surface with traceback at error level so the
-                # daemon log makes the cause obvious.
-                _logger.exception("proxy: attach loop crashed")
-            finally:
-                await _close_writer(writer)
+                writer.close()
+            except Exception as exc:  # noqa: BLE001
+                _logger.debug("proxy: writer close error: %s", exc)
 
     return _handler
 
