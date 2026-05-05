@@ -404,14 +404,24 @@ class ACPProxy:
     async def _build_bind_ack(
         self, agent_id: str, model_id: str, *, ack_kind: str
     ) -> dict[str, Any]:
-        """Build the response body for the bind-triggering request."""
+        """Build the response body for the bind-triggering request.
+
+        For ``set_config_option``, reply with the *full* aggregated
+        model list (every probed agent's models, namespaced) and the
+        new ``currentValue`` reflecting the user's choice.  An earlier
+        version of this method collapsed the option list to the bound
+        agent's models on the theory that cross-agent switches don't
+        work post-bind anyway — but the side effect was that Zed
+        rebuilt its picker from this response and lost every other
+        agent's models the moment the user picked their first one.
+        Cross-agent switches still error out (in :meth:`_select_model`),
+        just at the request level instead of by hiding the options.
+        """
         if ack_kind == "set_model":
             return {}
-        # set_config_option ack — collapse the picker to the bound agent.
-        bound_models = await self._roster.list_available_agents()
-        collapsed = [m for m in bound_models if m.startswith(f"{agent_id}{MODEL_NAMESPACE_SEP}")]
+        all_models = await self._roster.list_available_agents()
         current = f"{agent_id}{MODEL_NAMESPACE_SEP}{model_id}"
-        opt = _build_model_config_option(collapsed, current=current)
+        opt = _build_model_config_option(all_models, current=current)
         return SetSessionConfigOptionResponse(config_options=[opt]).model_dump(
             by_alias=True, exclude_none=True, mode="json"
         )
