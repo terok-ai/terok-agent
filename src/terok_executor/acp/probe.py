@@ -113,9 +113,24 @@ async def probe_agent_models(
     child_in = os.fdopen(host_in_r, "rb", buffering=0)
     child_out = os.fdopen(host_out_w, "wb", buffering=0)
     runtime = sandbox.runtime
+    # ``timeout=timeout + 1`` so exec_stdio's own subprocess.wait
+    # terminates the wrapper if it hangs past our handshake budget.
+    # Without this the executor thread stays pinned to a wrapper
+    # that never exits on stdin EOF — and a default thread pool with
+    # 13 probes in parallel can starve a subsequent bind that
+    # legitimately needs a slot.  The +1 leaves the asyncio
+    # ``wait_for`` above a chance to fire first (so we still
+    # ``raise ProbeError`` rather than ``TimeoutExpired``), with
+    # exec_stdio as the safety net.
     exec_future = loop.run_in_executor(
         None,
-        lambda: runtime.exec_stdio(container, wrapper_cmd, stdin=child_in, stdout=child_out),
+        lambda: runtime.exec_stdio(
+            container,
+            wrapper_cmd,
+            stdin=child_in,
+            stdout=child_out,
+            timeout=timeout + 1.0,
+        ),
     )
 
     try:

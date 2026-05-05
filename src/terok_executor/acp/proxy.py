@@ -34,6 +34,7 @@ mid-connection.  All of these are tracked for v2.
 from __future__ import annotations
 
 import asyncio
+import concurrent.futures
 import json
 import logging
 import os
@@ -107,6 +108,7 @@ class ACPProxy:
         self._backend_reader: asyncio.StreamReader | None = None
         self._backend_pump_task: asyncio.Task | None = None
         self._backend_exec_future: asyncio.Future | None = None
+        self._backend_exec_pool: concurrent.futures.ThreadPoolExecutor | None = None
         self._backend_stderr_pump_task: asyncio.Task | None = None
         self._backend_stderr_buffer: bytearray = bytearray()
         self._proxy_request_counter = 0
@@ -477,12 +479,36 @@ class ACPProxy:
         child_in = os.fdopen(host_to_child_r, "rb", buffering=0)
         child_out = os.fdopen(child_to_host_w, "wb", buffering=0)
         child_err = os.fdopen(child_err_w, "wb", buffering=0)
-        self._backend_exec_future = loop.run_in_executor(
-            None,
-            lambda: self._roster.exec_wrapper(
-                agent_id, stdin=child_in, stdout=child_out, stderr=child_err
-            ),
+
+        # Use a *dedicated* single-worker thread pool for the wrapper
+        # so the bind can never queue behind probe wrappers in the
+        # default executor.  Earlier observation: ``session/new`` runs
+        # 13 probes in parallel via ``run_in_executor(None, …)``.  On
+        # an 8-core box that's 12 default-pool workers; with 13
+        # probes (or a wrapper that doesn't exit on stdin EOF) the
+        # pool starves and a subsequent bind sits in the queue while
+        # ``_proxy_request`` ticks toward its 15s timeout.  Spawning
+        # a fresh executor scoped to this bind side-steps the
+        # contention entirely; the pool shuts down in ``_teardown_backend``.
+        self._backend_exec_pool = concurrent.futures.ThreadPoolExecutor(
+            max_workers=1,
+            thread_name_prefix=f"acp-bind-{agent_id}",
         )
+
+        def _run_exec_wrapper() -> int:
+            """Bind-thread entry — runs in the dedicated executor's worker.
+
+            Logged at DEBUG so a bind hang we *don't* attribute to
+            queue contention can be ruled in or out at a glance:
+            this line firing means the wrapper subprocess actually
+            started.
+            """
+            _logger.debug("backend[%s] exec_wrapper starting", agent_id)
+            return self._roster.exec_wrapper(
+                agent_id, stdin=child_in, stdout=child_out, stderr=child_err
+            )
+
+        self._backend_exec_future = loop.run_in_executor(self._backend_exec_pool, _run_exec_wrapper)
 
         # Start the backend → client pump and the stderr drain.
         self._backend_pump_task = loop.create_task(self._backend_pump_loop())
@@ -771,6 +797,14 @@ class ACPProxy:
             except Exception as exc:  # noqa: BLE001
                 _logger.debug("ACP proxy: backend exec drain: %s", exc)
             self._backend_exec_future = None
+        if self._backend_exec_pool is not None:
+            # ``wait=False`` so a stuck wrapper thread (one that
+            # ignores stdin EOF and SIGTERM both) doesn't block the
+            # proxy connection from tearing down.  The pool's worker
+            # is a daemon thread, so the interpreter shuts it down
+            # at exit if it really refuses to die.
+            self._backend_exec_pool.shutdown(wait=False)
+            self._backend_exec_pool = None
 
 
 # ── Module-private helpers ────────────────────────────────────────────
