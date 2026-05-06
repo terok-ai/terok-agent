@@ -723,6 +723,30 @@ BUILD_COMMAND = CommandDef(
     ),
 )
 
+
+def _handle_acp(*, container_name: str, socket_path: str) -> None:
+    """Run the per-container ACP host-proxy daemon until the container exits."""
+    import logging
+    import sys
+    from pathlib import Path
+
+    from .acp.daemon import serve_acp
+
+    logging.basicConfig(level=logging.INFO, format="acp[%(levelname)s] %(message)s")
+    sys.exit(serve_acp(container_name, Path(socket_path)))
+
+
+ACP_COMMAND = CommandDef(
+    name="acp",
+    help="Run the per-container ACP host-proxy daemon",
+    handler=_handle_acp,
+    args=(
+        ArgDef(name="container_name", help="Name of the running container to aggregate"),
+        ArgDef(name="socket_path", help="Path to bind the ACP listener socket on"),
+    ),
+)
+
+
 LIST_COMMAND = CommandDef(name="list", help="List running containers", handler=_handle_list)
 
 STOP_COMMAND = CommandDef(
@@ -813,4 +837,5 @@ COMMANDS: tuple[CommandDef, ...] = (
     UNINSTALL_COMMAND,
     LIST_COMMAND,
     STOP_COMMAND,
+    ACP_COMMAND,
 )

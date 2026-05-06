@@ -88,12 +88,26 @@ install:
         chmod +x /usr/local/bin/terok-claude-acp; \
         mkdir -p /etc/claude-code && chown dev:dev /etc/claude-code
   # The claude-agent-acp npm package backs the terok-claude-acp wrapper
-  # (needed for ACP clients like Toad to drive Claude).
+  # (needed for ACP clients like Toad and Zed to drive Claude).
   run_as_dev: |
     RUN set -eux; \
         npm install -g @agentclientprotocol/claude-agent-acp; \
         npm cache clean --force
     RUN curl -fsSL https://claude.ai/install.sh | bash
+    # ``claude-agent-acp`` looks for the Claude Code native binary at
+    # a path inside its own bundled SDK subpackage — the platform-
+    # specific ``@anthropic-ai/claude-agent-sdk-linux-x64`` ships the
+    # directory but not the binary, so a fresh container hits
+    # ``Claude Code native binary not found …`` the first time the
+    # client calls ``session/new``.  ``claude.ai/install.sh`` above
+    # has already placed a working claude in ``$HOME/.local/bin/``;
+    # symlink it where the SDK expects it so any ACP client can drive
+    # the wrapper without each having to set ``options.pathToClaudeCodeExecutable``.
+    RUN set -eux; \
+        SDK_BIN_DIR="$HOME/.npm-packages/lib/node_modules/@agentclientprotocol/claude-agent-acp/node_modules/@anthropic-ai/claude-agent-sdk-linux-x64"; \
+        test -d "$SDK_BIN_DIR"; \
+        test -x "$HOME/.local/bin/claude"; \
+        ln -sf "$HOME/.local/bin/claude" "$SDK_BIN_DIR/claude"
 
 help:
   label: '  \033[36mclaude\033[0m     - Claude Code CLI'
