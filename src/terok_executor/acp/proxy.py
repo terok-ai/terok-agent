@@ -15,15 +15,16 @@ Two phases drive the lifecycle:
   locally, advertising the aggregated ``agent:model`` list in
   :class:`acp.schema.SessionModelState` plus a mirroring
   ``configOptions[category=model]``.  No backend process exists yet.
-- **Bound**: on the first ``session/set_model`` (modern ACP's
-  dedicated method for model selection), the proxy uses the
-  ``agent:`` namespace prefix to pick which in-container wrapper
-  to spawn via :func:`asyncio.create_subprocess_exec` (argv from
-  :meth:`ACPRoster.wrapper_argv`), replays ``initialize`` +
-  ``session/new`` + ``session/set_model`` (with the bare sub-id)
-  to it, and from then on bridges frames in both directions.
-  Backend frames are mutated on the way out so model ids visible
-  to the client are namespaced again.
+- **Bound**: on the first model-picking client request — modern
+  ACP's ``session/set_model`` or older Zed's
+  ``session/set_config_option(configId="model")`` — the proxy
+  uses the ``agent:`` namespace prefix to pick which in-container
+  wrapper to spawn via :func:`asyncio.create_subprocess_exec`
+  (argv from :meth:`ACPRoster.wrapper_argv`), replays
+  ``initialize`` + ``session/new`` + ``session/set_model`` (with
+  the bare sub-id) to it, and from then on bridges frames in both
+  directions.  Backend frames are mutated on the way out so model
+  ids visible to the client are namespaced again.
 
 V1 takes shortcuts where the design is still settling: one session
 per connection (Zed reconnects on every chat — fix on the roadmap),
@@ -67,12 +68,12 @@ _logger = logging.getLogger(__name__)
 PROXY_REQUEST_ID_BASE = 1_000_000_000
 """Numeric offset for JSON-RPC ids the proxy injects during the bind
 handshake replay (``initialize`` / ``session/new`` /
-``session/set_model`` to the backend wrapper).  Integers (not strings)
-because some Node-side ACP servers silently dropped string ids; well
-clear of any client counter we've seen but still inside JS's safe-
-integer range.  Discrimination is by direct equality in the inline
-read loop — there's only one outstanding request at a time during
-the handshake."""
+``session/set_model`` to the backend wrapper).  Sits well clear of
+any client-side counter we've observed in practice while staying
+inside JS's safe-integer range so JSON parsers handle it as a number.
+Discrimination is by direct equality in the inline read loop —
+there's only one outstanding request at a time during the
+handshake."""
 
 JSONRPC_INVALID_REQUEST = -32600
 JSONRPC_INVALID_PARAMS = -32602

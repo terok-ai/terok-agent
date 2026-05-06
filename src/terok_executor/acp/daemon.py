@@ -191,20 +191,11 @@ async def _run(
 def _make_handler(roster: ACPRoster):
     """Return an ``asyncio.start_unix_server`` callback bound to *roster*.
 
-    No daemon-level concurrency lock: the previous v1 single-client
-    guard used an :class:`asyncio.Lock` plus ``writer.wait_closed()``,
-    but the liveness probe in :func:`acp_socket_is_live` (the same
-    one ``terok acp connect``'s ``_wait_for_socket`` calls before
-    bridging) opens and immediately closes a real socket connection.
-    That connection runs through the handler too and ends with
-    ``wait_closed()`` — which doesn't always fire its
-    ``connection_lost`` callback on Unix-socket half-closes — so the
-    lock would stay held and the *real* bridge client got reject-and-
-    RST.  Each connection now gets its own :class:`ACPProxy` and runs
-    independently; concurrent ACP clients are unusual in practice
-    and would only race over the backend agent, which the proxy's
-    own ``_client_session_id`` check already rejects at the protocol
-    level.
+    Each accepted connection gets its own :class:`ACPProxy` — no
+    daemon-level concurrency lock.  Concurrent ACP clients on the
+    same task are unusual in practice and would only race over the
+    backend agent, which the proxy's ``_client_session_id`` check
+    already rejects at the protocol level.
     """
 
     async def _handler(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
@@ -217,10 +208,10 @@ def _make_handler(roster: ACPRoster):
             # daemon log makes the cause obvious.
             _logger.exception("proxy: attach loop crashed")
         finally:
-            # Fire-and-forget close: ``wait_closed`` can hang on Unix-
-            # socket half-closes (the bug that motivated removing the
-            # outer lock), and we have nothing to wait for here — the
-            # proxy already ``drain``'d every ``_send_to_client`` call.
+            # Fire-and-forget close: ``wait_closed`` can hang on
+            # Unix-socket half-closes, and the proxy already
+            # ``drain``'d every ``_send_to_client`` call so there's
+            # nothing left to flush here.
             try:
                 writer.close()
             except Exception as exc:  # noqa: BLE001

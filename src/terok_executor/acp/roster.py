@@ -203,15 +203,14 @@ class ACPRoster:
         """Probe *agent_id* and cache the result on success only.
 
         Returns the probed model tuple (possibly empty on failure).
-        Failures are deliberately *not* cached — caching ``()`` on
-        timeout used to wedge the daemon's roster empty after a
-        single bad first-probe (cold container, slow Node start, OAuth
-        refresh) and only a daemon restart could recover.  The trade-
-        off is paid in cold-start latency: an agent that's genuinely
-        unavailable will be re-probed every ``session/new`` and add
-        its full timeout to the response.  The cache is per-daemon,
-        not per-connection, so once an agent probes successfully its
-        roster is reused across every Zed reconnect.
+        Failures are deliberately *not* cached: a transient cold-
+        start failure (slow Node start, OAuth refresh racing the
+        probe timeout) would otherwise pin the agent at empty for
+        the daemon's lifetime.  The trade-off is paid in cold-start
+        latency: an agent that's *genuinely* unavailable gets re-
+        probed every ``session/new`` and adds its full timeout to
+        the response.  Successful probes are cached per-daemon and
+        reused across reconnects.
         """
         key = self._cache_key(agent_id)
         try:
