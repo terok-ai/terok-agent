@@ -94,15 +94,19 @@ install:
         npm install -g @agentclientprotocol/claude-agent-acp; \
         npm cache clean --force
     RUN curl -fsSL https://claude.ai/install.sh | bash
-    # The ``@anthropic-ai/claude-agent-sdk-linux-x64`` subpackage
-    # ships the directory but not the native binary; without a
-    # binary at the SDK's expected path, ``session/new`` errors at
-    # SDK-load time before the wrapper can do anything else.
-    # ``claude.ai/install.sh`` above puts a working claude at
-    # ``$HOME/.local/bin/``; symlink it into the SDK's slot so the
-    # SDK-load check passes for every ACP client.
+    # The ``@anthropic-ai/claude-agent-sdk-<platform>`` subpackage ships
+    # the directory but not the native binary; without a binary at the
+    # SDK's expected path, ``session/new`` errors at SDK-load time before
+    # the wrapper can do anything else. ``claude.ai/install.sh`` above
+    # puts a working claude at ``$HOME/.local/bin/``; symlink it into the
+    # SDK's slot so the SDK-load check passes for every ACP client.
+    #
+    # npm picks the matching platform package automatically (linux-x64,
+    # linux-arm64, etc.) — glob for whichever it installed rather than
+    # hardcoding the arch.
     RUN set -eux; \
-        SDK_BIN_DIR="$HOME/.npm-packages/lib/node_modules/@agentclientprotocol/claude-agent-acp/node_modules/@anthropic-ai/claude-agent-sdk-linux-x64"; \
+        set -- "$HOME/.npm-packages/lib/node_modules/@agentclientprotocol/claude-agent-acp/node_modules/@anthropic-ai/claude-agent-sdk-"*/; \
+        SDK_BIN_DIR="${1%/}"; \
         test -d "$SDK_BIN_DIR"; \
         test -x "$HOME/.local/bin/claude"; \
         ln -sf "$HOME/.local/bin/claude" "$SDK_BIN_DIR/claude"
