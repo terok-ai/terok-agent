@@ -270,7 +270,7 @@ class TestGhToken:
     def test_non_dict_root_raises(self, tmp_path: Path) -> None:
         """Raises for non-dict YAML root."""
         (tmp_path / "hosts.yml").write_text("- item\n")
-        with pytest.raises(ValueError, match="Unexpected"):
+        with pytest.raises(ValueError, match="valid dictionary"):
             extract_gh_token(tmp_path)
 
     def test_missing_file_raises(self, tmp_path: Path) -> None:
@@ -309,35 +309,42 @@ class TestGlabTokenEdgeCases:
     def test_non_dict_root_raises(self, tmp_path: Path) -> None:
         """Raises for non-dict YAML root."""
         (tmp_path / "config.yml").write_text("- item\n")
-        with pytest.raises(ValueError, match="Unexpected"):
+        with pytest.raises(ValueError, match="valid dictionary"):
             extract_glab_token(tmp_path)
 
 
 class TestMalformedPayloads:
-    """Verify extractors reject non-mapping JSON/YAML."""
+    """Verify extractors reject non-mapping JSON/YAML.
+
+    All extractors except Claude let Pydantic's ``ValidationError`` propagate
+    when the credential file structurally doesn't match the expected vendor
+    shape — that surfaces "your file is malformed in this specific way"
+    instead of a generic "not found".  Claude has its own OAuth→API-key
+    fallback so swallows the validation error and falls through.
+    """
 
     def test_claude_array_root_raises(self, tmp_path: Path) -> None:
-        """Claude extractor rejects JSON array root."""
+        """Claude extractor falls through both files, then raises."""
         (tmp_path / ".credentials.json").write_text("[]")
         with pytest.raises(ValueError, match="No Claude credentials"):
             extract_claude_oauth(tmp_path)
 
     def test_codex_array_root_raises(self, tmp_path: Path) -> None:
-        """Codex extractor rejects JSON array root."""
+        """Codex extractor surfaces a Pydantic validation error."""
         (tmp_path / "auth.json").write_text("[]")
-        with pytest.raises(ValueError, match="not found or unreadable"):
+        with pytest.raises(ValueError, match="valid dictionary"):
             extract_codex_oauth(tmp_path)
 
     def test_json_api_key_array_root_raises(self, tmp_path: Path) -> None:
-        """JSON API key extractor rejects non-mapping root."""
+        """JSON API key extractor surfaces a Pydantic validation error."""
         (tmp_path / "config.json").write_text('"just a string"')
-        with pytest.raises(ValueError, match="not found or unreadable"):
+        with pytest.raises(ValueError, match="valid dictionary"):
             extract_json_api_key(tmp_path)
 
     def test_glab_non_mapping_hosts_raises(self, tmp_path: Path) -> None:
-        """GitLab extractor rejects non-mapping hosts section."""
+        """GitLab extractor pinpoints the offending section by name."""
         (tmp_path / "config.yml").write_text("hosts:\n  - item1\n  - item2\n")
-        with pytest.raises(ValueError, match="Expected mapping"):
+        with pytest.raises(ValueError, match=r"hosts[\s\S]*valid dictionary"):
             extract_glab_token(tmp_path)
 
 
@@ -355,3 +362,43 @@ class TestExtractCredential:
         """Unknown provider name raises ValueError."""
         with pytest.raises(ValueError, match="No credential extractor"):
             extract_credential("unknown-agent", tmp_path)
+
+
+class TestVendorFormatDrift:
+    """Verify the Pydantic schema surfaces vendor-format drift clearly.
+
+    These tests exercise the load-helper contract: when a credential file
+    parses fine but its structure no longer matches what the vendor used
+    to produce, the schema raises a precise validation error pointing at
+    the offending field.  Claude is the exception — its OAuth→API-key
+    fallback explicitly catches the validation error and tries the second
+    file before giving up.
+    """
+
+    def test_claude_oauth_block_type_drift_falls_through(self, tmp_path: Path) -> None:
+        """``claudeAiOauth: [...]`` is wrong shape — fall through to API key."""
+        (tmp_path / ".credentials.json").write_text(
+            json.dumps({"claudeAiOauth": ["not", "a", "block"]})
+        )
+        (tmp_path / "config.json").write_text(json.dumps({"api_key": "sk-fallback"}))
+        result = extract_claude_oauth(tmp_path)
+        assert result["type"] == "api_key"
+        assert result["key"] == "sk-fallback"
+
+    def test_codex_tokens_block_type_drift_raises(self, tmp_path: Path) -> None:
+        """``tokens: "..."`` (string instead of object) surfaces a clear error."""
+        (tmp_path / "auth.json").write_text(json.dumps({"tokens": "not-a-block"}))
+        with pytest.raises(ValueError, match="tokens"):
+            extract_codex_oauth(tmp_path)
+
+    def test_gh_host_block_type_drift_raises(self, tmp_path: Path) -> None:
+        """A host whose value is a string instead of a block is loud."""
+        (tmp_path / "hosts.yml").write_text("github.com: just-a-string\n")
+        with pytest.raises(ValueError, match="github.com"):
+            extract_gh_token(tmp_path)
+
+    def test_glab_host_block_type_drift_raises(self, tmp_path: Path) -> None:
+        """A glab host whose value is a list pinpoints the host name."""
+        (tmp_path / "config.yml").write_text("hosts:\n  gitlab.com:\n    - oops\n")
+        with pytest.raises(ValueError, match="gitlab.com"):
+            extract_glab_token(tmp_path)

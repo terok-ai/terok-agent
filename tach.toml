@@ -162,10 +162,19 @@ depends_on = [
 
 # ── credentials/ — authentication + vault ────────────────
 
+# Vendor file shapes — Pydantic models describing the third-party credential
+# files we read (Anthropic, OpenAI, GitHub, GitLab, OpenAI-compatible JSONs).
+# Lax (extra="ignore"); zero internal deps.
+[[modules]]
+path = "terok_executor.credentials.vendor_files"
+depends_on = []
+
 # Credential extractors — per-provider credential file parsers
 [[modules]]
 path = "terok_executor.credentials.extractors"
-depends_on = []
+depends_on = [
+    "terok_executor.credentials.vendor_files",
+]
 
 # Auth flows
 [[modules]]
@@ -189,6 +198,7 @@ depends_on = [
 [[modules]]
 path = "terok_executor.credentials.vault_commands"
 depends_on = [
+    "terok_executor.credentials.vendor_files",
     "terok_executor.paths",
     "terok_executor.roster.loader",
 ]
