@@ -19,19 +19,25 @@ Directory layout::
 from __future__ import annotations
 
 import importlib.resources
+import os
 import sys
+import tempfile
 from dataclasses import dataclass, field
 from functools import lru_cache
 from pathlib import Path
-from typing import TYPE_CHECKING, Literal, get_args
+from typing import Literal, get_args
 
+from terok_sandbox import SandboxConfig
 from terok_sandbox.config_stack import deep_merge
+from terok_sandbox.paths import namespace_config_dir
 
-if TYPE_CHECKING:
-    from terok_sandbox import SandboxConfig
-
-    from terok_executor.credentials.auth import AuthProvider
-    from terok_executor.provider.providers import AgentProvider, OpenCodeProviderConfig
+from terok_executor._util import yaml_load
+from terok_executor.credentials.auth import (
+    AuthKeyConfig,
+    AuthProvider,
+    _api_key_command,
+)
+from terok_executor.provider.providers import AgentProvider, OpenCodeProviderConfig
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -580,13 +586,9 @@ def ensure_vault_routes(cfg: SandboxConfig | None = None) -> Path:
 
     Returns the path to the written file.
     """
-    from terok_sandbox import SandboxConfig
-
     if cfg is None:
         cfg = SandboxConfig()
     path = cfg.routes_path
-    import os
-    import tempfile
 
     path.parent.mkdir(parents=True, exist_ok=True)
     content = get_roster().generate_routes_json() + "\n"
@@ -609,15 +611,11 @@ def ensure_vault_routes(cfg: SandboxConfig | None = None) -> Path:
 
 def _user_agents_dir() -> Path:
     """Return ``~/.config/terok/agent/agents/``."""
-    from terok_sandbox.paths import namespace_config_dir
-
     return namespace_config_dir("agent") / _USER_AGENTS_DIR_NAME
 
 
 def _load_yaml(text: str) -> dict:
     """Parse YAML text into a dict via ruamel.yaml round-trip loader."""
-    from terok_executor._util import yaml_load
-
     result = yaml_load(text)
     return result if isinstance(result, dict) else {}
 
@@ -721,8 +719,6 @@ def _check_roster_version(name: str, data: dict, *, source: str) -> None:
 
 def _to_opencode_config(data: dict) -> OpenCodeProviderConfig:
     """Deserialize the ``opencode:`` YAML section."""
-    from terok_executor.provider.providers import OpenCodeProviderConfig
-
     return OpenCodeProviderConfig(
         display_name=data["display_name"],
         base_url=data["base_url"],
@@ -736,8 +732,6 @@ def _to_opencode_config(data: dict) -> OpenCodeProviderConfig:
 
 def _to_agent_provider(name: str, data: dict) -> AgentProvider:
     """Deserialize a full agent YAML dict into an ``AgentProvider``."""
-    from terok_executor.provider.providers import AgentProvider
-
     hl = data.get("headless", {})
     aa = data.get("auto_approve", {})
     sess = data.get("session", {})
@@ -779,8 +773,6 @@ def _to_agent_provider(name: str, data: dict) -> AgentProvider:
 
 def _to_auth_provider(name: str, data: dict) -> AuthProvider | None:
     """Deserialize the ``auth:`` YAML section into an ``AuthProvider``."""
-    from terok_executor.credentials.auth import AuthKeyConfig, AuthProvider, _api_key_command
-
     auth = data.get("auth", {})
     if not auth:
         return None
@@ -839,8 +831,6 @@ def _to_auth_provider(name: str, data: dict) -> AuthProvider | None:
 
 def _derive_opencode_auth(name: str, data: dict) -> AuthProvider | None:
     """Auto-derive an auth provider for an OpenCode-based agent."""
-    from terok_executor.credentials.auth import AuthProvider
-
     oc = data.get("opencode")
     if not oc:
         return None
