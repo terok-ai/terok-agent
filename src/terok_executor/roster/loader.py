@@ -3,10 +3,11 @@
 
 """Loads agent and tool definitions from YAML and assembles them into a queryable roster.
 
-Loads per-agent definition files from bundled package resources and optional
-user extensions, deserializes them into the existing dataclass types, and
-provides the same query API that ``headless_providers`` and ``auth`` expose
-today.
+Loads per-agent definition files from bundled package resources and
+optional user extensions, validates them through the strict
+[`schema`][terok_executor.roster.schema] (typo-rejecting Pydantic
+models), and projects each entry onto the runtime
+[`types`][terok_executor.roster.types] dataclasses.
 
 Directory layout::
 
@@ -25,19 +26,18 @@ import tempfile
 from dataclasses import dataclass, field
 from functools import lru_cache
 from pathlib import Path
-from typing import Literal, get_args
 
+from pydantic import ValidationError
 from terok_sandbox import SandboxConfig
 from terok_sandbox.config_stack import deep_merge
 from terok_sandbox.paths import namespace_config_dir
 
 from terok_executor._util import yaml_load
-from terok_executor.credentials.auth import (
-    AuthKeyConfig,
-    AuthProvider,
-    _api_key_command,
-)
-from terok_executor.provider.providers import AgentProvider, OpenCodeProviderConfig
+from terok_executor.credentials.auth import AuthProvider
+from terok_executor.provider.providers import AgentProvider
+
+from .schema import RawAgentYaml, VaultRouteEntry
+from .types import HelpSpec, InstallSpec, MountDef, SidecarSpec, VaultRoute
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -57,165 +57,13 @@ and container may be on incompatible contracts.  Bumped only on breaking
 changes to the roster schema, never per release."""
 
 
-# ── Domain model ──────────────────────────────────────────────────────────
-
-
-@dataclass(frozen=True)
-class MountDef:
-    """A shared directory mount derived from the agent roster."""
-
-    host_dir: str
-    """Directory name under ``mounts_dir()`` (e.g. ``"_codex-config"``)."""
-
-    container_path: str
-    """Mount point inside the container (e.g. ``"/home/dev/.codex"``)."""
-
-    label: str
-    """Human-readable label (e.g. ``"Codex config"``)."""
-
-    credential_file: str = ""
-    """Credential file path relative to the mount root (e.g. ``".credentials.json"``).
-
-    Empty when the mount carries no auth artefact (e.g. opencode state dirs).
-    Populated from the matching ``vault.credential_file`` so callers can
-    layer a read-only shadow over the file without touching the rest of
-    the shared mount.  See [terok-ai/terok#873](https://github.com/terok-ai/terok/issues/873).
-    """
-
-    provider: str = ""
-    """Roster entry name that contributed this mount (e.g. ``"claude"``).
-
-    Empty for explicit ``mounts:`` blocks that aren't tied to a single
-    provider.  Used by the credential-shadow path to match against
-    [`ContainerEnvSpec.expose_credential_providers`][terok_executor.ContainerEnvSpec.expose_credential_providers].
-    """
-
-
-@dataclass(frozen=True)
-class VaultRoute:
-    """Vault route config parsed from a ``vault:`` YAML section.
-
-    Used to generate the ``routes.json`` that the vault server reads.
-    """
-
-    provider: str
-    """Agent/tool name (e.g. ``"claude"``)."""
-
-    route_prefix: str
-    """Path prefix in the proxy (e.g. ``"claude"`` → ``/claude/v1/...``)."""
-
-    upstream: str
-    """Upstream API base URL (e.g. ``"https://api.anthropic.com"``)."""
-
-    path_upstreams: dict[str, str] = field(default_factory=dict)
-    """Optional request-path prefix → upstream-base overrides."""
-
-    oauth_extra_headers: dict[str, str] = field(default_factory=dict)
-    """Provider-specific headers added only when forwarding OAuth credentials."""
-
-    auth_header: str = "Authorization"
-    """HTTP header name for the real credential."""
-
-    auth_prefix: str = "Bearer "
-    """Prefix before the token value in the auth header."""
-
-    credential_type: str = "api_key"
-    """Type of credential: ``"oauth"``, ``"api_key"``, ``"oauth_token"``, ``"pat"``."""
-
-    credential_file: str = ""
-    """Credential file path relative to the auth mount."""
-
-    phantom_env: dict[str, bool] = field(default_factory=dict)
-    """Phantom env vars for API-key credentials (e.g. ``{"ANTHROPIC_API_KEY": true}``)."""
-
-    oauth_phantom_env: dict[str, bool] = field(default_factory=dict)
-    """Phantom env vars for OAuth credentials (e.g. ``{"CLAUDE_CODE_OAUTH_TOKEN": true}``).
-
-    When the stored credential type is ``"oauth"`` and this is non-empty, these
-    env vars are injected *instead of* [`phantom_env`][terok_executor.roster.loader.VaultRoute.phantom_env].
-    """
-
-    base_url_env: str = ""
-    """Env var to override with the vault's HTTP URL (e.g. ``"ANTHROPIC_BASE_URL"``)."""
-
-    socket_env: str = ""
-    """Env var that receives the container-side vault socket path.
-
-    Set when the agent speaks HTTP-over-UNIX natively (e.g. Claude reads
-    ``ANTHROPIC_UNIX_SOCKET``).  The resolved value is mode-dependent and
-    injected centrally by the env builder.
-    """
-
-    shared_config_patch: dict | None = None
-    """Optional shared config patch applied after auth (e.g. Vibe's config.toml)."""
-
-    oauth_refresh: dict | None = None
-    """OAuth refresh config: ``{token_url, client_id, scope}``."""
-
-
-@dataclass(frozen=True)
-class InstallSpec:
-    """Roster-driven install snippets emitted into the L1 Dockerfile.
-
-    The build template loops over the resolved selection and concatenates
-    ``run_as_root`` snippets in the root section, ``run_as_dev`` snippets
-    in the dev-user section.  Both fields are raw Dockerfile fragments
-    (``RUN``, ``COPY`` — anything valid at top level after ``USER ...``).
-    ``depends_on`` lists other roster names that must be installed
-    alongside this one (transitively resolved at selection time).
-    """
-
-    depends_on: tuple[str, ...] = ()
-    """Other roster entries this install requires (e.g. ``blablador → opencode``)."""
-
-    run_as_root: str = ""
-    """Dockerfile fragment emitted in the root section of the L1 image."""
-
-    run_as_dev: str = ""
-    """Dockerfile fragment emitted in the dev-user section of the L1 image."""
-
-
-HelpSection = Literal["agent", "dev_tool"]
-"""Section in the in-container help banner that an entry belongs to."""
-
-HELP_SECTIONS: tuple[HelpSection, ...] = get_args(HelpSection)
-"""All valid [`HelpSection`][terok_executor.roster.loader.HelpSection] values, as a tuple (single source of truth)."""
-
-
-@dataclass(frozen=True)
-class HelpSpec:
-    """One-line entry shown in the in-container help banner."""
-
-    label: str = ""
-    """Raw banner line (the agent owns its formatting, including ANSI codes)."""
-
-    section: HelpSection = "agent"
-
-
-@dataclass(frozen=True)
-class SidecarSpec:
-    """Sidecar container configuration parsed from a ``sidecar:`` YAML section.
-
-    Tools with sidecar specs run in a separate lightweight L1 image
-    (no agent CLIs) and receive the real API key instead of phantom tokens.
-    """
-
-    tool_name: str
-    """Tool identifier used to select the Jinja2 install block in the template."""
-
-    env_map: dict[str, str] = field(default_factory=dict)
-    """Maps container env var names to credential dict keys.
-
-    Example: ``{"CODERABBIT_API_KEY": "key"}`` reads ``cred["key"]`` and
-    injects it as ``CODERABBIT_API_KEY``.
-    """
-
-
 @dataclass(frozen=True)
 class AgentRoster:
-    """Loaded roster of agents and tools from YAML definitions.
+    """Queryable view over the loaded set of agents and tools.
 
-    Provides the same query API as the legacy hardcoded dicts.
+    Returned by [`load_roster`][terok_executor.roster.loader.load_roster];
+    grouped accessors expose providers, auth providers, vault routes,
+    sidecar specs, install snippets, and help blurbs by name.
     """
 
     _providers: dict[str, AgentProvider] = field(default_factory=dict)
@@ -287,7 +135,7 @@ class AgentRoster:
         """Resolve a user-supplied selection into the full set of roster names to install.
 
         Accepts the literal string ``"all"`` (every roster entry that has an
-        [`InstallSpec`][terok_executor.roster.loader.InstallSpec]) or a tuple of names.  Expands ``depends_on``
+        [`InstallSpec`][terok_executor.roster.types.InstallSpec]) or a tuple of names.  Expands ``depends_on``
         transitively.  Returns the names sorted alphabetically — the canonical
         order used for the OCI label, the tag suffix, and the in-container
         manifest.
@@ -376,13 +224,14 @@ class AgentRoster:
     # ── Domain operations ──
 
     def generate_routes_json(self) -> str:
-        """Generate the ``routes.json`` content for the vault server.
+        """Generate the ``routes.json`` content for the sandbox vault server.
 
-        Returns a JSON string mapping route prefixes to upstream config.
+        Returns a JSON object mapping provider name → [`VaultRouteEntry`][terok_executor.roster.schema.VaultRouteEntry]
+        with empty/absent optional fields stripped.
         """
-        import json
+        from pydantic import TypeAdapter
 
-        routes: dict[str, dict[str, object]] = {}
+        routes: dict[str, VaultRouteEntry] = {}
         prefix_owners: dict[str, str] = {}
         for route in self._vault_routes.values():
             existing = prefix_owners.get(route.route_prefix)
@@ -392,19 +241,19 @@ class AgentRoster:
                     f"providers {existing!r} and {route.provider!r}"
                 )
             prefix_owners[route.route_prefix] = route.provider
-            entry: dict[str, object] = {
-                "upstream": route.upstream,
-                "auth_header": route.auth_header,
-                "auth_prefix": route.auth_prefix,
-            }
-            if route.path_upstreams:
-                entry["path_upstreams"] = route.path_upstreams
-            if route.oauth_extra_headers:
-                entry["oauth_extra_headers"] = route.oauth_extra_headers
-            if route.oauth_refresh:
-                entry["oauth_refresh"] = route.oauth_refresh
-            routes[route.provider] = entry
-        return json.dumps(routes, indent=2)
+            routes[route.provider] = VaultRouteEntry(
+                upstream=route.upstream,
+                auth_header=route.auth_header,
+                auth_prefix=route.auth_prefix,
+                path_upstreams=route.path_upstreams or None,
+                oauth_extra_headers=route.oauth_extra_headers or None,
+                oauth_refresh=route.oauth_refresh or None,
+            )
+        return (
+            TypeAdapter(dict[str, VaultRouteEntry])
+            .dump_json(routes, indent=2, exclude_none=True)
+            .decode()
+        )
 
     def collect_all_auto_approve_env(self) -> dict[str, str]:
         """Merge ``auto_approve.env`` from all providers into one dict."""
@@ -459,7 +308,10 @@ def load_roster() -> AgentRoster:
 
     Bundled agents in ``resources/agents/*.yaml`` are loaded first, then
     user files in ``~/.config/terok/agent/agents/*.yaml`` are deep-merged
-    on top (allowing field-level overrides or entirely new agents).
+    on top (allowing field-level overrides or entirely new agents).  Each
+    merged entry is then validated through [`RawAgentYaml`][terok_executor.roster.schema.RawAgentYaml]
+    — typos in section keys, wrong types, or unknown fields fail loud
+    instead of silently defaulting.
     """
     raw = _load_bundled_agents()
 
@@ -484,25 +336,32 @@ def load_roster() -> AgentRoster:
     seen_mounts: dict[str, MountDef] = {}
 
     for name, data in sorted(raw.items()):
-        kind = data.get("kind", "native")
-        if kind != "runtime":
+        try:
+            spec = RawAgentYaml.model_validate(data)
+        except ValidationError as exc:
+            raise ValueError(f"Agent {name!r}: invalid roster YAML\n{exc}") from exc
+
+        label = spec.resolve_label(name)
+        is_agent_kind = spec.kind not in ("tool", "runtime")
+
+        if spec.kind != "runtime":
             all_names.append(name)
-
-        # Agent kinds (native, opencode, bridge) get a AgentProvider;
-        # tools and runtime entries only contribute auth/mounts.
-        if kind not in ("tool", "runtime"):
+        if is_agent_kind:
             agent_names.append(name)
-            providers[name] = _to_agent_provider(name, data)
+            providers[name] = spec.to_agent_provider(name)
 
-        # Credential file from the vault section — attached to whichever
-        # auth/mount entry shares the same host_dir.  Empty when absent.
-        credential_file = (data.get("vault") or {}).get("credential_file", "")
+        credential_file = spec.vault.credential_file if spec.vault else ""
 
-        # Auth: explicit auth section, or auto-derived from opencode config
-        auth_prov = _to_auth_provider(name, data)
+        auth_prov: AuthProvider | None
+        if spec.auth is not None:
+            auth_prov = spec.auth.to_dataclass(name=name, label=label)
+        elif is_agent_kind:
+            auth_prov = spec.derive_opencode_auth(name)
+        else:
+            auth_prov = None
+
         if auth_prov is not None:
             auth_providers[name] = auth_prov
-            # Auth providers also contribute a mount
             if auth_prov.host_dir_name not in seen_mounts:
                 seen_mounts[auth_prov.host_dir_name] = MountDef(
                     host_dir=auth_prov.host_dir_name,
@@ -511,54 +370,28 @@ def load_roster() -> AgentRoster:
                     credential_file=credential_file,
                     provider=name,
                 )
-        elif kind not in ("tool", "runtime"):
-            oc_auth = _derive_opencode_auth(name, data)
-            if oc_auth is not None:
-                auth_providers[name] = oc_auth
-                if oc_auth.host_dir_name not in seen_mounts:
-                    seen_mounts[oc_auth.host_dir_name] = MountDef(
-                        host_dir=oc_auth.host_dir_name,
-                        container_path=oc_auth.container_mount,
-                        label=f"{oc_auth.label} config",
-                        credential_file=credential_file,
-                        provider=name,
-                    )
 
-        # Explicit mounts section
-        for m in data.get("mounts", ()):
-            hd = m["host_dir"]
-            if hd not in seen_mounts:
-                seen_mounts[hd] = MountDef(
-                    host_dir=hd,
-                    container_path=m["container_path"],
-                    label=m.get("label", name),
+        for m in spec.mounts:
+            if m.host_dir not in seen_mounts:
+                seen_mounts[m.host_dir] = MountDef(
+                    host_dir=m.host_dir,
+                    container_path=m.container_path,
+                    label=m.label or name,
                 )
 
-        # Vault route
-        vault_route = _to_vault_route(name, data)
-        if vault_route is not None:
-            vault_routes[name] = vault_route
+        if spec.vault is not None:
+            vault_routes[name] = spec.vault.to_dataclass(provider=name)
 
-        # Sidecar spec
-        sidecar = _to_sidecar_spec(name, data)
-        if sidecar is not None:
-            sidecar_specs[name] = sidecar
+        if spec.sidecar is not None:
+            sidecar_specs[name] = spec.sidecar.to_dataclass(default_name=name)
 
-        # Install snippets and help blurb (both optional)
-        install = _to_install_spec(name, data)
-        if install is not None:
-            installs[name] = install
-        help_spec = _to_help_spec(name, data)
-        if help_spec is not None:
-            helps[name] = help_spec
+        if spec.install is not None:
+            installs[name] = spec.install.to_dataclass()
 
-        raw_web_ingress = data.get("web_ingress", False)
-        if not isinstance(raw_web_ingress, bool):
-            raise ValueError(
-                f"Agent {name!r}: web_ingress must be a boolean, got "
-                f"{type(raw_web_ingress).__name__}"
-            )
-        if raw_web_ingress:
+        if spec.help is not None:
+            helps[name] = spec.help.to_dataclass()
+
+        if spec.web_ingress:
             web_ingress_names.add(name)
 
     return AgentRoster(
@@ -712,251 +545,3 @@ def _check_roster_version(name: str, data: dict, *, source: str) -> None:
             f"or adjust the file.",
             file=sys.stderr,
         )
-
-
-# ── Deserialization ───────────────────────────────────────────────────────
-
-
-def _to_opencode_config(data: dict) -> OpenCodeProviderConfig:
-    """Deserialize the ``opencode:`` YAML section."""
-    return OpenCodeProviderConfig(
-        display_name=data["display_name"],
-        base_url=data["base_url"],
-        preferred_model=data["preferred_model"],
-        fallback_model=data["fallback_model"],
-        env_var_prefix=data["env_var_prefix"],
-        config_dir=data["config_dir"],
-        auth_key_url=data["auth_key_url"],
-    )
-
-
-def _to_agent_provider(name: str, data: dict) -> AgentProvider:
-    """Deserialize a full agent YAML dict into an ``AgentProvider``."""
-    hl = data.get("headless", {})
-    aa = data.get("auto_approve", {})
-    sess = data.get("session", {})
-    caps = data.get("capabilities", {})
-    gi = data.get("git_identity", {})
-
-    oc_data = data.get("opencode")
-    oc = _to_opencode_config(oc_data) if oc_data else None
-
-    return AgentProvider(
-        name=name,
-        label=data.get("label", name),
-        binary=data.get("binary", name),
-        git_author_name=gi.get("name", name.capitalize()),
-        git_author_email=gi.get("email", f"noreply@{name}.ai"),
-        # Headless command shape
-        headless_subcommand=hl.get("subcommand"),
-        prompt_flag=hl.get("prompt_flag", "-p"),
-        auto_approve_env=aa.get("env", {}),
-        auto_approve_flags=tuple(aa.get("flags", ())),
-        output_format_flags=tuple(hl.get("output_format_flags", ())),
-        model_flag=hl.get("model_flag"),
-        max_turns_flag=hl.get("max_turns_flag"),
-        verbose_flag=hl.get("verbose_flag"),
-        # Session
-        supports_session_resume=sess.get("supports_resume", False),
-        resume_flag=sess.get("resume_flag"),
-        continue_flag=sess.get("continue_flag"),
-        session_file=sess.get("session_file"),
-        supports_agents_json=caps.get("agents_json", False),
-        supports_session_hook=sess.get("supports_hook", False),
-        supports_add_dir=caps.get("add_dir", False),
-        # Log format
-        log_format=caps.get("log_format", "plain"),
-        opencode_config=oc,
-        refuse_subcommands=tuple(data.get("wrapper", {}).get("refuse_subcommands", ())),
-    )
-
-
-def _to_auth_provider(name: str, data: dict) -> AuthProvider | None:
-    """Deserialize the ``auth:`` YAML section into an ``AuthProvider``."""
-    auth = data.get("auth", {})
-    if not auth:
-        return None
-
-    # Determine command: explicit command list, or build from auth_key config.
-    # API-key-only providers may have no command — that's fine.
-    auth_key_data = auth.get("auth_key")
-    if "command" in auth:
-        command = list(auth["command"])
-    elif auth_key_data:
-        command = _api_key_command(
-            AuthKeyConfig(
-                label=auth_key_data.get("label", data.get("label", name)),
-                key_url=auth_key_data["key_url"],
-                env_var=auth_key_data["env_var"],
-                config_path=auth_key_data["config_path"],
-                printf_template=auth_key_data["printf_template"],
-                tool_name=auth_key_data.get("tool_name", name),
-            )
-        )
-    else:
-        command = []
-
-    modes = tuple(auth.get("modes", ("api_key",)))
-
-    raw_pcs = auth.get("post_capture_state", {})
-    if raw_pcs is None:
-        post_capture_state: dict[str, dict] = {}
-    elif isinstance(raw_pcs, dict):
-        post_capture_state = {}
-        for filename, patch in raw_pcs.items():
-            if not isinstance(filename, str) or not isinstance(patch, dict):
-                raise ValueError(
-                    f"Agent {name!r}: auth.post_capture_state must map filename -> mapping"
-                )
-            post_capture_state[filename] = patch
-    else:
-        raise ValueError(
-            f"Agent {name!r}: auth.post_capture_state must be a mapping, "
-            f"got {type(raw_pcs).__name__}"
-        )
-
-    return AuthProvider(
-        name=name,
-        label=data.get("label", name),
-        host_dir_name=auth["host_dir"],
-        container_mount=auth["container_mount"],
-        command=command,
-        banner_hint=auth.get("banner_hint", ""),
-        extra_run_args=tuple(auth.get("extra_run_args", ())),
-        modes=modes,
-        api_key_hint=auth.get("api_key_hint", ""),
-        post_capture_state=post_capture_state,
-    )
-
-
-def _derive_opencode_auth(name: str, data: dict) -> AuthProvider | None:
-    """Auto-derive an auth provider for an OpenCode-based agent."""
-    oc = data.get("opencode")
-    if not oc:
-        return None
-
-    hint = oc.get("api_key_hint") or f"Get your API key at: {oc['auth_key_url']}"
-    return AuthProvider(
-        name=name,
-        label=data.get("label", name),
-        host_dir_name=f"_{name}-config",
-        container_mount=f"/home/dev/{oc['config_dir']}",
-        command=[],  # API-key-only — no container command needed
-        banner_hint="",
-        modes=("api_key",),
-        api_key_hint=hint,
-    )
-
-
-def _validated_oauth_refresh(name: str, raw: dict | None) -> dict | None:
-    """Validate ``oauth_refresh`` section and return it, or ``None``."""
-    if raw is None:
-        return None
-    for key in ("token_url", "client_id"):
-        if key not in raw:
-            raise ValueError(f"Agent {name!r}: oauth_refresh missing required key {key!r}")
-    return raw
-
-
-def _to_vault_route(name: str, data: dict) -> VaultRoute | None:
-    """Parse the ``vault:`` YAML section into a route config."""
-    cp = data.get("vault")
-    if not cp:
-        return None
-    if not isinstance(cp, dict):
-        raise ValueError(f"Agent {name!r}: vault must be a mapping, got {type(cp).__name__}")
-    for required in ("route_prefix", "upstream"):
-        if required not in cp:
-            raise ValueError(f"Agent {name!r}: vault missing required key {required!r}")
-    oauth_phantom_env = cp.get("oauth_phantom_env") or {}
-    if "socket_path" in cp:
-        raise ValueError(
-            f"Agent {name!r}: 'socket_path' is no longer configurable — "
-            "remove it; the env builder resolves the vault socket path centrally"
-        )
-    raw_path_upstreams = cp.get("path_upstreams")
-    if raw_path_upstreams is None:
-        path_upstreams = {}
-    elif not isinstance(raw_path_upstreams, dict):
-        raise ValueError(
-            f"Agent {name!r}: path_upstreams must be a mapping, "
-            f"got {type(raw_path_upstreams).__name__}"
-        )
-    else:
-        path_upstreams = raw_path_upstreams
-
-    raw_oauth_extra_headers = cp.get("oauth_extra_headers")
-    if raw_oauth_extra_headers is None:
-        oauth_extra_headers = {}
-    elif not isinstance(raw_oauth_extra_headers, dict):
-        raise ValueError(
-            f"Agent {name!r}: oauth_extra_headers must be a mapping, "
-            f"got {type(raw_oauth_extra_headers).__name__}"
-        )
-    else:
-        oauth_extra_headers = raw_oauth_extra_headers
-    return VaultRoute(
-        provider=name,
-        route_prefix=cp["route_prefix"],
-        upstream=cp["upstream"],
-        path_upstreams=dict(path_upstreams),
-        oauth_extra_headers={str(k): str(v) for k, v in oauth_extra_headers.items()},
-        auth_header=cp.get("auth_header", "Authorization"),
-        auth_prefix=cp.get("auth_prefix", "Bearer "),
-        credential_type=cp.get("credential_type", "api_key"),
-        credential_file=cp.get("credential_file", ""),
-        phantom_env=cp.get("phantom_env", {}),
-        oauth_phantom_env=oauth_phantom_env,
-        base_url_env=cp.get("base_url_env", ""),
-        socket_env=cp.get("socket_env") or "",
-        shared_config_patch=cp.get("shared_config_patch"),
-        oauth_refresh=_validated_oauth_refresh(name, cp.get("oauth_refresh")),
-    )
-
-
-def _to_sidecar_spec(name: str, data: dict) -> SidecarSpec | None:
-    """Parse the optional ``sidecar:`` YAML section into a [`SidecarSpec`][terok_executor.roster.loader.SidecarSpec]."""
-    sc = data.get("sidecar")
-    if not sc:
-        return None
-    return SidecarSpec(
-        tool_name=sc.get("tool_name", name),
-        env_map=dict(sc.get("env_map", {})),
-    )
-
-
-def _to_install_spec(name: str, data: dict) -> InstallSpec | None:
-    """Parse the optional ``install:`` YAML section into an [`InstallSpec`][terok_executor.roster.loader.InstallSpec].
-
-    Both snippet fields and ``depends_on`` are optional individually; the
-    section as a whole is omitted only for entries that need no install
-    work in L1 (typically sidecar tools and runtime kinds with no payload).
-    """
-    inst = data.get("install")
-    if not inst:
-        return None
-    if not isinstance(inst, dict):
-        raise ValueError(f"Agent {name!r}: install must be a mapping, got {type(inst).__name__}")
-    deps = inst.get("depends_on", ())
-    if isinstance(deps, str):
-        deps = (deps,)
-    return InstallSpec(
-        depends_on=tuple(deps),
-        run_as_root=inst.get("run_as_root", "") or "",
-        run_as_dev=inst.get("run_as_dev", "") or "",
-    )
-
-
-def _to_help_spec(name: str, data: dict) -> HelpSpec | None:
-    """Parse the optional ``help:`` YAML section into a [`HelpSpec`][terok_executor.roster.loader.HelpSpec]."""
-    h = data.get("help")
-    if not h:
-        return None
-    if not isinstance(h, dict):
-        raise ValueError(f"Agent {name!r}: help must be a mapping, got {type(h).__name__}")
-    section = h.get("section") or "agent"
-    if section not in HELP_SECTIONS:
-        raise ValueError(
-            f"Agent {name!r}: help.section must be one of {list(HELP_SECTIONS)!r}, got {section!r}"
-        )
-    return HelpSpec(label=h.get("label", "") or "", section=section)

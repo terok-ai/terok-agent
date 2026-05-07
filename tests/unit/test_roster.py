@@ -9,6 +9,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 import pytest
+from pydantic import ValidationError
 
 from terok_executor.credentials.auth import AuthProvider
 from terok_executor.provider.providers import AgentProvider
@@ -16,12 +17,29 @@ from terok_executor.roster import (
     SidecarSpec,
     load_roster,
 )
-from terok_executor.roster.loader import (
-    _load_bundled_agents,
-    _to_agent_provider,
-    _to_auth_provider,
-    _to_sidecar_spec,
-)
+from terok_executor.roster.loader import _load_bundled_agents
+from terok_executor.roster.schema import RawAgentYaml
+
+
+def _agent_provider(name: str, data: dict) -> AgentProvider:
+    """Validate *data* through the schema and return its [`AgentProvider`][]."""
+    return RawAgentYaml.model_validate(data).to_agent_provider(name)
+
+
+def _auth_provider(name: str, data: dict) -> AuthProvider | None:
+    """Validate *data* and project the ``auth:`` section to an [`AuthProvider`][]."""
+    spec = RawAgentYaml.model_validate(data)
+    if spec.auth is None:
+        return None
+    return spec.auth.to_dataclass(name=name, label=spec.resolve_label(name))
+
+
+def _sidecar_spec(name: str, data: dict) -> SidecarSpec | None:
+    """Validate *data* and project the ``sidecar:`` section to a [`SidecarSpec`][]."""
+    spec = RawAgentYaml.model_validate(data)
+    if spec.sidecar is None:
+        return None
+    return spec.sidecar.to_dataclass(default_name=name)
 
 
 @pytest.fixture(autouse=True)
@@ -207,7 +225,7 @@ class TestDeserializeProvider:
 
     def test_claude_full_fidelity(self) -> None:
         agents = _load_bundled_agents()
-        p = _to_agent_provider("claude", agents["claude"])
+        p = _agent_provider("claude", agents["claude"])
 
         assert isinstance(p, AgentProvider)
         assert p.name == "claude"
@@ -235,7 +253,7 @@ class TestDeserializeProvider:
 
     def test_codex_subcommand_and_flags(self) -> None:
         agents = _load_bundled_agents()
-        p = _to_agent_provider("codex", agents["codex"])
+        p = _agent_provider("codex", agents["codex"])
 
         assert p.headless_subcommand == "exec"
         assert p.prompt_flag == ""
@@ -244,7 +262,7 @@ class TestDeserializeProvider:
 
     def test_blablador_opencode_config(self) -> None:
         agents = _load_bundled_agents()
-        p = _to_agent_provider("blablador", agents["blablador"])
+        p = _agent_provider("blablador", agents["blablador"])
 
         assert p.opencode_config is not None
         assert p.opencode_config.display_name == "Helmholtz Blablador"
@@ -253,7 +271,7 @@ class TestDeserializeProvider:
 
     def test_vibe_session_support(self) -> None:
         agents = _load_bundled_agents()
-        p = _to_agent_provider("vibe", agents["vibe"])
+        p = _agent_provider("vibe", agents["vibe"])
 
         assert p.supports_session_resume is True
         assert p.resume_flag == "--resume"
@@ -263,7 +281,7 @@ class TestDeserializeProvider:
 
     def test_defaults_for_omitted_fields(self) -> None:
         """Omitted optional fields get sensible defaults."""
-        p = _to_agent_provider("minimal", {"label": "Test", "binary": "test"})
+        p = _agent_provider("minimal", {"label": "Test", "binary": "test"})
 
         assert p.headless_subcommand is None
         assert p.auto_approve_env == {}
@@ -279,7 +297,7 @@ class TestDeserializeAuth:
 
     def test_claude_auth_uses_native_cli(self) -> None:
         agents = _load_bundled_agents()
-        ap = _to_auth_provider("claude", agents["claude"])
+        ap = _auth_provider("claude", agents["claude"])
 
         assert isinstance(ap, AuthProvider)
         assert ap.name == "claude"
@@ -289,33 +307,31 @@ class TestDeserializeAuth:
 
     def test_codex_auth_command(self) -> None:
         agents = _load_bundled_agents()
-        ap = _to_auth_provider("codex", agents["codex"])
+        ap = _auth_provider("codex", agents["codex"])
 
         assert ap.command == ["setup-codex-auth.sh"]
         assert ap.extra_run_args == ("-p", "127.0.0.1:1455:1455")
 
     def test_gh_tool_auth(self) -> None:
         agents = _load_bundled_agents()
-        ap = _to_auth_provider("gh", agents["gh"])
+        ap = _auth_provider("gh", agents["gh"])
 
         assert ap.name == "gh"
         assert ap.command == ["gh", "auth", "login"]
         assert ap.host_dir_name == "_gh-config"
 
     def test_no_auth_section_returns_none(self) -> None:
-        result = _to_auth_provider("test", {"label": "Test"})
+        result = _auth_provider("test", {"label": "Test"})
         assert result is None
 
     def test_claude_post_capture_state(self) -> None:
         """Claude YAML declares post_capture_state for onboarding."""
         agents = _load_bundled_agents()
-        ap = _to_auth_provider("claude", agents["claude"])
+        ap = _auth_provider("claude", agents["claude"])
         assert ap.post_capture_state == {".claude.json": {"hasCompletedOnboarding": True}}
 
     def test_post_capture_state_rejects_non_dict_root(self) -> None:
-        """Loader rejects post_capture_state that is not a mapping."""
-        import pytest
-
+        """Schema rejects post_capture_state that is not a mapping."""
         data = {
             "auth": {
                 "host_dir": "_x",
@@ -323,13 +339,11 @@ class TestDeserializeAuth:
                 "post_capture_state": "invalid",
             },
         }
-        with pytest.raises(ValueError, match="must be a mapping"):
-            _to_auth_provider("test", data)
+        with pytest.raises(ValidationError, match="post_capture_state"):
+            _auth_provider("test", data)
 
     def test_post_capture_state_rejects_non_dict_value(self) -> None:
-        """Loader rejects post_capture_state with a non-dict value."""
-        import pytest
-
+        """Schema rejects post_capture_state with a non-dict value."""
         data = {
             "auth": {
                 "host_dir": "_x",
@@ -337,8 +351,8 @@ class TestDeserializeAuth:
                 "post_capture_state": {".foo.json": "not-a-dict"},
             },
         }
-        with pytest.raises(ValueError, match="must map filename -> mapping"):
-            _to_auth_provider("test", data)
+        with pytest.raises(ValidationError, match="post_capture_state"):
+            _auth_provider("test", data)
 
     def test_post_capture_state_none_coerced_to_empty(self) -> None:
         """YAML null for post_capture_state is coerced to empty dict."""
@@ -349,7 +363,8 @@ class TestDeserializeAuth:
                 "post_capture_state": None,
             },
         }
-        ap = _to_auth_provider("test", data)
+        ap = _auth_provider("test", data)
+        assert ap is not None
         assert ap.post_capture_state == {}
 
 
@@ -464,14 +479,14 @@ class TestDeserializeSidecar:
 
     def test_coderabbit_sidecar_spec(self) -> None:
         agents = _load_bundled_agents()
-        spec = _to_sidecar_spec("coderabbit", agents["coderabbit"])
+        spec = _sidecar_spec("coderabbit", agents["coderabbit"])
 
         assert isinstance(spec, SidecarSpec)
         assert spec.tool_name == "coderabbit"
         assert spec.env_map == {"CODERABBIT_API_KEY": "key"}
 
     def test_no_sidecar_returns_none(self) -> None:
-        result = _to_sidecar_spec("claude", {"label": "Claude", "binary": "claude"})
+        result = _sidecar_spec("claude", {"label": "Claude", "binary": "claude"})
         assert result is None
 
     def test_roster_exposes_sidecar_specs(self) -> None:
@@ -521,22 +536,21 @@ class TestUserOverrides:
         """A user file can override a single field of a bundled agent."""
         user_dir = tmp_path / "agents"
         user_dir.mkdir()
-        (user_dir / "claude.yaml").write_text("tier: 99\n")
+        (user_dir / "claude.yaml").write_text("label: Claude Custom\n")
 
         with patch("terok_executor.roster.loader._user_agents_dir", return_value=user_dir):
             reg = load_roster()
 
-        # Provider still loads correctly, tier is just metadata
         p = reg.get_provider("claude")
         assert p.name == "claude"
-        assert p.label == "Claude"  # unchanged
+        assert p.label == "Claude Custom"
 
     def test_user_new_agent(self, tmp_path: Path) -> None:
         """A user can add an entirely new agent."""
         user_dir = tmp_path / "agents"
         user_dir.mkdir()
         (user_dir / "custom.yaml").write_text(
-            "kind: agent\nlabel: Custom Agent\nbinary: custom\n"
+            "kind: native\nlabel: Custom Agent\nbinary: custom\n"
             "git_identity:\n  name: Custom\n  email: a@b.c\n"
             "headless:\n  prompt_flag: '-p'\n"
             "session:\n  supports_resume: false\n"
@@ -641,3 +655,110 @@ class TestRegistryBehavior:
         for name, p in reg.providers.items():
             if p.supports_session_resume:
                 assert p.resume_flag, f"{name}: supports_resume but no resume_flag"
+
+
+# ---------------------------------------------------------------------------
+# Strict YAML validation
+# ---------------------------------------------------------------------------
+
+
+class TestStrictValidation:
+    """Verify that the schema rejects typos, unknown keys, and bad values.
+
+    The whole point of routing every YAML through Pydantic before
+    projecting onto runtime dataclasses is to fail loud on mistakes —
+    both in our own bundled files and in user overrides under
+    ``~/.config/terok/agent/agents/``.
+    """
+
+    @pytest.mark.parametrize(
+        "bad_data",
+        [
+            pytest.param({"headles": {}}, id="top-level-section-typo"),
+            pytest.param({"headless": {"prommpt_flag": "-p"}}, id="nested-field-typo"),
+            pytest.param({"definitely_not_a_section": True}, id="unknown-root-key"),
+            pytest.param(
+                {"vault": {"route_prefix": "x", "upstream": "y", "rooute_prefix": "x"}},
+                id="nested-vault-typo",
+            ),
+        ],
+    )
+    def test_typos_and_unknowns_rejected(self, bad_data: dict) -> None:
+        with pytest.raises(ValidationError, match="(Extra inputs|extra_forbidden)"):
+            RawAgentYaml.model_validate(bad_data)
+
+    def test_invalid_kind_rejected(self) -> None:
+        with pytest.raises(ValidationError, match="kind"):
+            RawAgentYaml.model_validate({"kind": "wizard"})
+
+    def test_invalid_auth_mode_rejected(self) -> None:
+        data = {
+            "auth": {
+                "host_dir": "_x",
+                "container_mount": "/x",
+                "modes": ["oauth", "telepathy"],
+            }
+        }
+        with pytest.raises(ValidationError, match="modes"):
+            RawAgentYaml.model_validate(data)
+
+    def test_invalid_credential_type_rejected(self) -> None:
+        data = {
+            "vault": {
+                "route_prefix": "x",
+                "upstream": "https://x",
+                "credential_type": "smoke-signal",
+            }
+        }
+        with pytest.raises(ValidationError, match="credential_type"):
+            RawAgentYaml.model_validate(data)
+
+    def test_invalid_help_section_rejected(self) -> None:
+        with pytest.raises(ValidationError, match="section"):
+            RawAgentYaml.model_validate({"help": {"section": "elsewhere"}})
+
+    def test_legacy_socket_path_rejected_with_helpful_message(self) -> None:
+        data = {
+            "vault": {
+                "route_prefix": "x",
+                "upstream": "https://x",
+                "socket_path": "/tmp/legacy.sock",
+            }
+        }
+        with pytest.raises(ValidationError, match="socket_path.*no longer"):
+            RawAgentYaml.model_validate(data)
+
+    def test_install_depends_on_accepts_string_shorthand(self) -> None:
+        spec = RawAgentYaml.model_validate({"install": {"depends_on": "claude"}})
+        assert spec.install is not None
+        assert spec.install.depends_on == ["claude"]
+
+    def test_install_depends_on_accepts_list(self) -> None:
+        spec = RawAgentYaml.model_validate({"install": {"depends_on": ["claude", "codex"]}})
+        assert spec.install is not None
+        assert spec.install.depends_on == ["claude", "codex"]
+
+    def test_load_roster_surfaces_bad_user_yaml(self, tmp_path: Path) -> None:
+        """A user file with a typo aborts the load with a pointed error."""
+        user_dir = tmp_path / "agents"
+        user_dir.mkdir()
+        (user_dir / "broken.yaml").write_text(
+            "kind: native\nlabel: Broken\nbinary: broken\n"
+            "git_identity:\n  name: B\n  email: b@b.b\n"
+            "headless:\n  prommpt_flag: '-p'\n"  # typo
+        )
+        with patch("terok_executor.roster.loader._user_agents_dir", return_value=user_dir):
+            with pytest.raises(ValueError, match="broken.*invalid roster YAML"):
+                load_roster()
+
+    def test_every_bundled_yaml_validates(self) -> None:
+        """Every shipped YAML must pass strict validation — guards against
+        regressions where we'd ship a broken file."""
+        from terok_executor.roster.loader import _check_roster_version
+
+        for name, data in _load_bundled_agents().items():
+            _check_roster_version(name, data, source=f"bundled {name}")
+            try:
+                RawAgentYaml.model_validate(data)
+            except ValidationError as exc:
+                pytest.fail(f"bundled {name}.yaml fails validation:\n{exc}")

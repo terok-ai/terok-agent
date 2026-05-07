@@ -10,8 +10,18 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
+from pydantic import ValidationError
 
-from terok_executor.roster import get_roster
+from terok_executor.roster import VaultRoute, get_roster
+from terok_executor.roster.schema import RawAgentYaml
+
+
+def _vault_route(name: str, data: dict) -> VaultRoute | None:
+    """Validate *data* and project the ``vault:`` section to a [`VaultRoute`][]."""
+    spec = RawAgentYaml.model_validate(data)
+    if spec.vault is None:
+        return None
+    return spec.vault.to_dataclass(provider=name)
 
 
 class TestVaultRoutesParsed:
@@ -67,11 +77,9 @@ class TestVaultRoutesParsed:
     def test_rejects_legacy_socket_path_field(self) -> None:
         """socket_path was removed — declaring it must fail loudly so stale
         agent manifests don't silently drift out of sync."""
-        from terok_executor.roster.loader import _to_vault_route
-
         base = {"route_prefix": "test", "upstream": "https://example.com"}
-        with pytest.raises(ValueError, match="socket_path.*no longer"):
-            _to_vault_route("test", {"vault": {**base, "socket_path": "/tmp/s.sock"}})
+        with pytest.raises(ValidationError, match="socket_path.*no longer"):
+            _vault_route("test", {"vault": {**base, "socket_path": "/tmp/s.sock"}})
 
     def test_opencode_agents_have_routes(self) -> None:
         """Blablador and KISSKI have vault routes."""
@@ -633,13 +641,11 @@ class TestFormatCredentials:
 
 
 class TestToVaultRoute:
-    """Verify _to_vault_route() parsing edge cases."""
+    """Verify ``vault:`` schema parsing edge cases."""
 
     def test_socket_env_alone_accepted(self) -> None:
         """socket_env (without socket_path) is the new valid form."""
-        from terok_executor.roster.loader import _to_vault_route
-
-        route = _to_vault_route(
+        route = _vault_route(
             "test",
             {
                 "vault": {
@@ -654,9 +660,7 @@ class TestToVaultRoute:
 
     def test_neither_socket_field_accepted(self) -> None:
         """Omitting socket_env is valid (agent has no socket transport)."""
-        from terok_executor.roster.loader import _to_vault_route
-
-        route = _to_vault_route(
+        route = _vault_route(
             "test",
             {
                 "vault": {
@@ -670,9 +674,7 @@ class TestToVaultRoute:
 
     def test_oauth_phantom_env_parsed(self) -> None:
         """oauth_phantom_env is parsed from YAML data."""
-        from terok_executor.roster.loader import _to_vault_route
-
-        route = _to_vault_route(
+        route = _vault_route(
             "test",
             {
                 "vault": {
@@ -686,28 +688,27 @@ class TestToVaultRoute:
         assert route.oauth_phantom_env == {"MY_OAUTH_TOKEN": True}
 
     def test_missing_required_field_raises(self) -> None:
-        """Missing route_prefix or upstream raises ValueError."""
-        from terok_executor.roster.loader import _to_vault_route
-
-        with pytest.raises(ValueError, match="route_prefix"):
-            _to_vault_route("test", {"vault": {"upstream": "https://x.com"}})
-        with pytest.raises(ValueError, match="upstream"):
-            _to_vault_route("test", {"vault": {"route_prefix": "t"}})
+        """Missing route_prefix or upstream raises ValidationError."""
+        with pytest.raises(ValidationError, match="route_prefix"):
+            _vault_route("test", {"vault": {"upstream": "https://x.com"}})
+        with pytest.raises(ValidationError, match="upstream"):
+            _vault_route("test", {"vault": {"route_prefix": "t"}})
 
     def test_no_vault_returns_none(self) -> None:
-        """Agent without vault section returns None."""
-        from terok_executor.roster.loader import _to_vault_route
+        """Agent without vault section returns None.
 
-        assert _to_vault_route("test", {}) is None
-        assert _to_vault_route("test", {"vault": {}}) is None
+        An empty ``vault: {}`` block is invalid (route_prefix and upstream
+        are required), so it raises rather than returning None.
+        """
+        assert _vault_route("test", {}) is None
+        with pytest.raises(ValidationError):
+            _vault_route("test", {"vault": {}})
 
     @pytest.mark.parametrize("field", ["path_upstreams", "oauth_extra_headers"])
     def test_optional_vault_maps_reject_falsy_non_mappings(self, field: str) -> None:
         """Falsy lists/strings must not be silently treated as absent maps."""
-        from terok_executor.roster.loader import _to_vault_route
-
-        with pytest.raises(ValueError, match=f"{field} must be a mapping"):
-            _to_vault_route(
+        with pytest.raises(ValidationError, match=field):
+            _vault_route(
                 "test",
                 {
                     "vault": {

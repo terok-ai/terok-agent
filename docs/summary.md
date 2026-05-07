@@ -5,6 +5,7 @@
     - [Security](security.md)
 - Developer Guide
     - [Vault](vault.md)
+    - [Roster Reference](roster-reference.md)
     - [Code Metrics](quality-report.md)
     - [Module Map](module-map.md)
     - [CI Workflow Map](ci-map.md)

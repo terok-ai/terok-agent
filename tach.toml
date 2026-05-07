@@ -45,13 +45,29 @@ depends_on = []
 
 # ── roster/ — agent catalog ─────────────────────────────────────────
 
-# YAML agent roster — loads bundled + user agent definitions
+# Runtime dataclasses — pure data, zero deps
+[[modules]]
+path = "terok_executor.roster.types"
+depends_on = []
+
+# Pydantic schema — strict YAML validation, projects onto runtime dataclasses
+[[modules]]
+path = "terok_executor.roster.schema"
+depends_on = [
+    "terok_executor.credentials.auth",
+    "terok_executor.provider.providers",
+    "terok_executor.roster.types",
+]
+
+# YAML agent roster — loads bundled + user agent definitions, drives the schema
 [[modules]]
 path = "terok_executor.roster.loader"
 depends_on = [
     "terok_executor._util",
     "terok_executor.credentials.auth",
     "terok_executor.provider.providers",
+    "terok_executor.roster.schema",
+    "terok_executor.roster.types",
 ]
 
 # Roster package waypoint (re-exports from loader)

@@ -61,6 +61,9 @@ plugins:
       quality_report_codecov_repo: terok-ai/terok-executor
       module_map: true
       ref_pages: true
+  - gen-files:
+      scripts:
+        - docs/gen_roster_reference.py
   - literate-nav:
       nav_file: summary.md
   - section-index
