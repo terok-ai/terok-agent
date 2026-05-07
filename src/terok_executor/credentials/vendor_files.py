@@ -12,7 +12,7 @@ as long as the **fields we read** still hold their shape.
 
 A single failure mode is loud: if a vendor renames or retypes a field we
 *depend on* (e.g. ``claudeAiOauth.accessToken`` or ``tokens.access_token``),
-the model raises [`ValidationError`][pydantic.ValidationError] — pointing at
+the model raises [`ValidationError`][pydantic_core.ValidationError] — pointing at
 the exact field, in the exact file.  Callers translate that into a clear
 "vendor file format may have changed" surface.
 
@@ -43,17 +43,18 @@ def _normalize_js_timestamp(v: object) -> float | None:
     """Coerce a JavaScript-style millisecond timestamp to POSIX seconds.
 
     Claude Code is a JS app; ``expiresAt`` is ``Date.now()`` (milliseconds
-    since epoch).  Values larger than ``1e12`` are unambiguously ms (a value
-    in seconds that large would be year 33658).  Any non-numeric or boolean
-    input collapses to ``None`` — best-effort, since the field is purely
-    informational on our side (the vault re-checks expiry against the actual
-    upstream).
+    since epoch).  Values at or above ``1e12`` are unambiguously ms — the
+    same number in seconds would land in year 33658 — so split there
+    inclusive of the boundary, not strictly above it.  Any non-numeric or
+    boolean input collapses to ``None``: best-effort, since the field is
+    purely informational on our side (the vault re-checks expiry against
+    the actual upstream).
     """
     if v is None:
         return None
     if isinstance(v, bool) or not isinstance(v, (int, float)):
         return None
-    return v / 1000 if v > 1e12 else float(v)
+    return v / 1000 if v >= 1e12 else float(v)
 
 
 JsTimestamp = Annotated[float | None, BeforeValidator(_normalize_js_timestamp)]
@@ -184,17 +185,17 @@ def load_vendor_json[T: BaseModel](model: type[T], path: Path) -> T | None:
     Returns ``None`` only for "the file isn't there" cases — missing,
     unreadable, or unparseable as JSON.  When the JSON parses but the
     structure doesn't match *model* (wrong root type, missing nested
-    field, wrong field type), raises [`pydantic.ValidationError`][pydantic.ValidationError]
+    field, wrong field type), raises [`ValidationError`][pydantic_core.ValidationError]
     — a ``ValueError`` subclass — so the caller surfaces "your credential
     file is in a shape we don't recognize" rather than silently falling
     through to a generic "not found" path.  Callers that want a
     fall-through anyway (e.g. Claude tries OAuth then API key) catch
-    [`ValidationError`][pydantic.ValidationError] explicitly.
+    [`ValidationError`][pydantic_core.ValidationError] explicitly.
     """
     try:
         text = path.read_text(encoding="utf-8")
         data = json.loads(text)
-    except (OSError, json.JSONDecodeError):
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
         return None
     return model.model_validate(data)
 
@@ -213,7 +214,7 @@ def load_vendor_yaml[T: BaseModel](model: type[T], path: Path) -> T | None:
     yaml = YAML(typ="safe")
     try:
         data = yaml.load(path)
-    except (OSError, YAMLError):
+    except (OSError, UnicodeDecodeError, YAMLError):
         return None
     return model.model_validate(data)
 
@@ -222,13 +223,19 @@ def warn_drift(path: Path, exc: ValidationError) -> None:
     """Print a stderr breadcrumb when a vendor file fails validation.
 
     Extractors with their own fallback path (e.g. Claude tries OAuth then
-    API key) catch [`ValidationError`][pydantic.ValidationError] silently.
+    API key) catch [`ValidationError`][pydantic_core.ValidationError] silently.
     Without this breadcrumb, a vendor renaming a field we depend on would
     surface only as a generic "no creds found" with no diagnostic trail.
+
+    Pydantic's default ``str(exc)`` includes the offending ``input_value``
+    — which can be a credential — so the breadcrumb deliberately renders
+    only the field path(s) from ``exc.errors()``, never the input value.
     """
+    fields = ", ".join(".".join(str(p) for p in err["loc"]) for err in exc.errors())
+    detail = f" at: {fields}" if fields else ""
     print(
         f"Warning [credentials]: {path} has unexpected shape — "
-        f"vendor format may have changed.\n  {exc}",
+        f"vendor format may have changed.{detail}",
         file=sys.stderr,
     )
 

@@ -41,6 +41,7 @@ plugins:
         python:
           inventories:
             - https://docs.python.org/3/objects.inv
+            - https://docs.pydantic.dev/latest/objects.inv
             - https://terok-ai.github.io/terok/objects.inv
             - https://terok-ai.github.io/terok-sandbox/objects.inv
             - https://terok-ai.github.io/terok-shield/objects.inv
