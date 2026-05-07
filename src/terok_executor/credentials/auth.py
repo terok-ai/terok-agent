@@ -277,23 +277,28 @@ def store_api_key(
 def _prompt_api_key(info: AuthProvider) -> str:
     """Interactively prompt for an API key (echoes ``*`` per character).
 
-    pwinput only guards against a *replaced* ``sys.stdin``, not against a
-    non-TTY one — shell redirection (``< keyfile.txt``) leaves ``sys.stdin``
-    identical to ``sys.__stdin__`` with a non-TTY fd, which would crash
-    ``tty.setraw`` inside pwinput.  Gate the call on ``isatty()`` and read
-    a line deterministically otherwise so pipe-fed automation still works.
+    Uses ``prompt_toolkit.prompt(is_password=True)`` for the TTY path —
+    proper terminal raw-mode handling, ``Ctrl+C`` raises
+    ``KeyboardInterrupt`` cleanly, and every character is reliably
+    masked (the previous ``pwinput`` implementation occasionally let a
+    keystroke echo through and swallowed ``SIGINT``).  Non-TTY input
+    (``terok auth … < keyfile.txt``) falls back to a plain
+    ``readline`` so pipe-fed automation still works.
     """
     import sys
 
     if info.api_key_hint:
         print(info.api_key_hint)
-    prompt = f"{info.label} API key: "
+    prompt_text = f"{info.label} API key: "
     if sys.stdin.isatty():
-        import pwinput
+        from prompt_toolkit import prompt as ptk_prompt
 
-        key = pwinput.pwinput(prompt=prompt, mask="*").strip()
+        try:
+            key = ptk_prompt(prompt_text, is_password=True).strip()
+        except (KeyboardInterrupt, EOFError):
+            raise SystemExit("API key entry cancelled.") from None
     else:
-        print(prompt, end="", flush=True)
+        print(prompt_text, end="", flush=True)
         key = sys.stdin.readline().strip()
     if not key:
         raise SystemExit("No API key entered.")

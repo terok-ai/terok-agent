@@ -28,7 +28,7 @@ terok-sandbox = {url = "https://github.com/terok-ai/terok-sandbox/releases/downl
 "ruamel.yaml" = ">=0.18"
 Jinja2 = ">=3.1"
 tomli-w = ">=1.0"
-pwinput = ">=1.0.3"
+prompt-toolkit = ">=3.0"
 pydantic = ">=2.9"
 rich = ">=13.0"
 agent-client-protocol = ">=0.7"
