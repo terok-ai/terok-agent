@@ -135,14 +135,17 @@ def authenticate(
     mounts_dir: Path,
     image: str | Callable[[], str] | None = None,
     expose_token: bool = False,
+    oauth_enabled: bool = True,
 ) -> None:
     """Run the auth flow for *provider*, optionally scoped to a project.
 
-    Dispatches based on the provider's ``modes`` field:
+    Dispatches based on the *effective* mode set — what the provider
+    declares in the roster (``modes:``) intersected with what the
+    caller has actually permitted via *oauth_enabled*:
 
-    - **api_key only**: prompt for key, store directly (no container)
+    - **api_key only** (or OAuth disabled by gate): prompt for key, store directly
     - **oauth only**: launch container with vendor CLI
-    - **both**: ask user to choose, then dispatch accordingly
+    - **both**: ask the user to choose, then dispatch accordingly
 
     Args:
         project_id: Project identifier used for container naming and the
@@ -162,15 +165,30 @@ def authenticate(
             the shared mount instead of writing a phantom marker.  Used
             by tier 3 (``expose_oauth_token``) where containers need
             the actual token.
+        oauth_enabled: External gate for the OAuth path.  ``True``
+            (default) means the roster's ``modes`` list is honored
+            verbatim.  ``False`` instructs the function to skip the
+            OAuth prompt and go straight to the API-key flow regardless
+            of what the roster declares — terok passes ``False`` for
+            providers whose OAuth path requires unset config flags
+            (e.g. ``agent.codex.allow_oauth=true`` plus ``experimental:
+            true``).  When the provider declares only OAuth and the
+            gate is closed, raises ``SystemExit`` with a clear hint.
 
-    Raises ``SystemExit`` if the provider name is unknown.
+    Raises ``SystemExit`` if the provider name is unknown or no usable
+    auth mode remains after gating.
     """
     info = AUTH_PROVIDERS.get(provider)
     if not info:
         available = ", ".join(AUTH_PROVIDERS)
         raise SystemExit(f"Unknown auth provider: {provider}. Available: {available}")
 
-    if info.supports_oauth and info.supports_api_key:
+    # Gating: a provider's roster may declare OAuth, but the deployment
+    # may not allow it (terok's ``allow_oauth`` + ``experimental`` gate).
+    has_oauth = info.supports_oauth and oauth_enabled
+    has_api_key = info.supports_api_key
+
+    if has_oauth and has_api_key:
         # Both modes — let the user choose first; only resolve the image
         # (and trigger any on-demand L1 build) if the user picks OAuth.
         print(f"Authenticate {info.label}:\n")
@@ -190,12 +208,14 @@ def authenticate(
             expose_token=expose_token,
         )
 
-    elif info.supports_api_key:
+    elif has_api_key:
         # API key only — fast path, no container, image never resolved.
+        # Reaches here either because the provider declares only api_key,
+        # or because the OAuth gate is closed.
         key = _prompt_api_key(info)
         store_api_key(provider, key)
 
-    else:
+    elif has_oauth:
         # OAuth only — image is required.
         _run_auth_container(
             project_id,
@@ -203,6 +223,15 @@ def authenticate(
             mounts_dir=mounts_dir,
             image=_resolve_image(image, provider),
             expose_token=expose_token,
+        )
+
+    else:
+        # Provider declares only OAuth and the caller's gate is closed.
+        raise SystemExit(
+            f"Auth for {provider!r} requires OAuth, but it is disabled by "
+            f"the caller's gating policy.  For terok this typically means "
+            f"the experimental flag and/or the provider-specific "
+            f"allow_oauth/expose_oauth_token config keys are unset."
         )
 
 

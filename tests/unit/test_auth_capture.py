@@ -929,3 +929,118 @@ class TestAuthenticateImageLaziness:
         ):
             with pytest.raises(ValueError, match="needs an L1 image"):
                 authenticate(None, "codex", mounts_dir=tmp_path, image=None)
+
+
+class TestAuthenticateOauthGate:
+    """Verify ``oauth_enabled=False`` collapses dual-mode providers to API-key.
+
+    The roster declares which modes a provider supports; deployments
+    sometimes have to clamp that down (terok's ``experimental`` +
+    ``allow_oauth`` gating for Codex/Claude).  When the gate is closed,
+    the OAuth prompt must not be offered — even though the roster says
+    OAuth is supported.
+    """
+
+    def test_oauth_disabled_skips_prompt_and_goes_to_api_key(self, tmp_path: Path) -> None:
+        """Dual-mode provider with ``oauth_enabled=False`` short-circuits to API key."""
+        from unittest.mock import MagicMock, patch
+
+        from terok_executor.credentials.auth import AuthProvider, authenticate
+
+        provider = AuthProvider(
+            name="claude",
+            label="Claude",
+            host_dir_name="_claude-config",
+            container_mount="/home/dev/.claude",
+            command=["claude"],
+            banner_hint="",
+            modes=("oauth", "api_key"),  # roster says both
+        )
+        # No ``input`` patch — if the OAuth-or-API-key prompt fires the
+        # test will hang (catching that regression too).
+        with (
+            patch.dict(
+                "terok_executor.credentials.auth.AUTH_PROVIDERS",
+                {"claude": provider},
+                clear=True,
+            ),
+            patch(
+                "terok_executor.credentials.auth._prompt_api_key",
+                return_value="sk-ant-test",
+            ),
+            patch("terok_executor.credentials.auth.store_api_key") as mock_store,
+            patch("terok_executor.credentials.auth._run_auth_container") as mock_run,
+        ):
+            authenticate(
+                None,
+                "claude",
+                mounts_dir=tmp_path,
+                image=MagicMock(),
+                oauth_enabled=False,
+            )
+
+        mock_store.assert_called_once_with("claude", "sk-ant-test")
+        mock_run.assert_not_called()
+
+    def test_oauth_enabled_default_keeps_dual_prompt(self, tmp_path: Path) -> None:
+        """``oauth_enabled`` defaults to True so existing callers see the prompt."""
+        from unittest.mock import patch
+
+        from terok_executor.credentials.auth import AuthProvider, authenticate
+
+        provider = AuthProvider(
+            name="claude",
+            label="Claude",
+            host_dir_name="_claude-config",
+            container_mount="/home/dev/.claude",
+            command=["claude"],
+            banner_hint="",
+            modes=("oauth", "api_key"),
+        )
+        with (
+            patch.dict(
+                "terok_executor.credentials.auth.AUTH_PROVIDERS",
+                {"claude": provider},
+                clear=True,
+            ),
+            patch("builtins.input", return_value="2") as mock_input,  # picks API key
+            patch(
+                "terok_executor.credentials.auth._prompt_api_key",
+                return_value="sk-ant",
+            ),
+            patch("terok_executor.credentials.auth.store_api_key"),
+        ):
+            authenticate(None, "claude", mounts_dir=tmp_path, image="img:tag")
+        # Default ``oauth_enabled=True`` ⇒ user is asked to choose.
+        mock_input.assert_called_once()
+
+    def test_oauth_only_provider_with_gate_closed_raises(self, tmp_path: Path) -> None:
+        """A provider that only declares OAuth raises when the gate forbids it."""
+        from unittest.mock import patch
+
+        import pytest
+
+        from terok_executor.credentials.auth import AuthProvider, authenticate
+
+        provider = AuthProvider(
+            name="some-future-oauth-only",
+            label="Future",
+            host_dir_name="_future-config",
+            container_mount="/home/dev/.future",
+            command=["future"],
+            banner_hint="",
+            modes=("oauth",),  # no api_key fallback
+        )
+        with patch.dict(
+            "terok_executor.credentials.auth.AUTH_PROVIDERS",
+            {"some-future-oauth-only": provider},
+            clear=True,
+        ):
+            with pytest.raises(SystemExit, match="OAuth.*disabled"):
+                authenticate(
+                    None,
+                    "some-future-oauth-only",
+                    mounts_dir=tmp_path,
+                    image="img:tag",
+                    oauth_enabled=False,
+                )
