@@ -252,6 +252,7 @@ def build_base_images(
     rebuild: bool = False,
     full_rebuild: bool = False,
     build_dir: Path | None = None,
+    tag_as_default: bool = False,
 ) -> ImageSet:
     """Build L0 + L1 container images and return their tags.
 
@@ -271,6 +272,13 @@ def build_base_images(
         rebuild: Force rebuild with cache bust (refreshes agent installs).
         full_rebuild: Force rebuild with ``--no-cache --pull=always``.
         build_dir: Build context directory (must be empty or absent).
+        tag_as_default: When ``True``, additionally tag the L1 with the
+            unsuffixed default-alias [`l1_image_tag(base_image)`][terok_executor.container.build.l1_image_tag].
+            Set by [`ensure_default_l1`][terok_executor.container.build.ensure_default_l1]
+            when this build represents the user's *configured* default
+            agent selection.  Project / per-agent / partial builds leave
+            it ``False`` so the alias keeps pointing at the user's
+            default L1, not at whatever was last built.
 
     Returns:
         [`ImageSet`][terok_executor.container.build.ImageSet] with the L0 and L1 image tags.
@@ -292,6 +300,7 @@ def build_base_images(
     l0_tag = l0_image_tag(base_image)
     l1_tag = l1_image_tag(base_image, selected)
     l1_alias = l1_image_tag(base_image)
+    extra_tags: tuple[str, ...] = (l1_alias,) if tag_as_default else ()
 
     # Skip if both images exist and no forced rebuild — done before
     # detect_family() so cached images for unknown bases (built earlier
@@ -337,14 +346,17 @@ def build_base_images(
             pull_always=full_rebuild,
         )
 
-        # The unsuffixed alias lets `terok run` find the latest L1 without
-        # knowing the agent-set suffix; the suffixed tag keeps prior
-        # selections individually addressable.
+        # The unsuffixed alias is reserved for the user's default L1
+        # (whatever they have configured as ``image.agents``).  It must
+        # not be retagged on partial / project / per-agent builds —
+        # otherwise `terok auth <X>` would silently end up running
+        # against an L1 missing X.  Callers that ARE building the
+        # user's default selection pass ``tag_as_default=True``.
         build_project_image(
             dockerfile=context / "L1.cli.Dockerfile",
             context_dir=context,
             target_tag=l1_tag,
-            extra_tags=(l1_alias,),
+            extra_tags=extra_tags,
             build_args={"BASE_IMAGE": l0_tag, "AGENT_CACHE_BUST": cache_bust},
             no_cache=full_rebuild,
         )
@@ -639,15 +651,20 @@ def l0_image_tag(base_image: str) -> str:
 def l1_image_tag(base_image: str, agents: tuple[str, ...] | None = None) -> str:
     """Return the L1 agent CLI image tag for *base_image* and a selection.
 
-    When *agents* is ``None``, returns the unsuffixed alias
-    (e.g. ``terok-l1-cli:ubuntu-24.04``) — the moving handle that always
-    points at the most recent build.  When *agents* is a tuple of names,
-    appends a sorted ``-a-b-c`` suffix (``-`` is the only spec-valid
-    separator that ``_base_tag`` already uses) so multiple selections
-    coexist in the local image store and stay individually addressable.
-    Agent name fragments are passed through the same ``_base_tag``
-    sanitiser to keep the final tag within the OCI tag charset
-    (``[A-Za-z0-9_.-]``).
+    When *agents* is ``None``, returns the unsuffixed **default-alias**
+    (e.g. ``terok-l1-cli:ubuntu-24.04``).  This alias points at whichever
+    L1 was last built with ``tag_as_default=True`` — i.e. the L1 that
+    holds the user's configured default agent selection.  Project /
+    per-agent / partial builds get only their suffixed tag and never
+    touch the alias, so ``terok auth <provider>`` can rely on the alias
+    actually containing every agent the user configured.
+
+    When *agents* is a tuple of names, appends a sorted ``-a-b-c``
+    suffix (``-`` is the only spec-valid separator that ``_base_tag``
+    already uses) so multiple selections coexist in the local image
+    store and stay individually addressable.  Agent name fragments are
+    passed through the same ``_base_tag`` sanitiser to keep the final
+    tag within the OCI tag charset (``[A-Za-z0-9_.-]``).
 
     The full tag (after ``:``) is bounded by `_MAX_TAG_LEN`.  When
     the readable ``base-a-b-c`` form would overflow, the agent portion
@@ -799,3 +816,70 @@ def _image_exists(image: str) -> bool:
         capture_output=True,
     )
     return result.returncode == 0
+
+
+def image_agents(image: str) -> set[str]:
+    """Return the set of agent names installed in *image*.
+
+    Reads the ``ai.terok.agents`` OCI label baked into the L1 image at
+    build time (see [`AGENTS_LABEL`][terok_executor.container.build.AGENTS_LABEL]).
+    Returns an empty set if the image is missing, has no label, or its
+    label is empty — never raises on inspection failure, since callers
+    use the result to make a "image good enough?" decision and an
+    empty set always means "no, rebuild".
+    """
+    try:
+        result = subprocess.run(
+            [
+                "podman",
+                "image",
+                "inspect",
+                image,
+                "--format",
+                f'{{{{ index .Config.Labels "{AGENTS_LABEL}" }}}}',
+            ],
+            capture_output=True,
+            text=True,
+            timeout=10,
+            check=False,
+        )
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        return set()
+    if result.returncode != 0:
+        return set()
+    csv = result.stdout.strip()
+    return {a for a in csv.split(",") if a} if csv else set()
+
+
+def ensure_default_l1(
+    base_image: str = DEFAULT_BASE_IMAGE,
+    *,
+    family: str | None = None,
+    agents: str | tuple[str, ...] = "all",
+) -> str:
+    """Return the default-alias L1 tag, building the user's default L1 if absent.
+
+    Used by ``terok auth`` (and the equivalent standalone-executor flow)
+    to resolve a host-wide L1 image that contains every agent the user
+    has configured.  If the alias already exists locally, it is trusted
+    and returned as-is — the alias is reserved for the user's default
+    selection (see [`l1_image_tag`][terok_executor.container.build.l1_image_tag]),
+    so its contents are well-defined.  When the alias is missing the
+    function builds it via [`build_base_images`][terok_executor.container.build.build_base_images]
+    with ``tag_as_default=True``.
+
+    *agents* defaults to the literal string ``"all"`` so standalone
+    callers get the whole roster.  terok passes the user's configured
+    ``image.agents`` value here so the alias means *"every agent the
+    user has enabled"* rather than the implementation-default roster.
+    """
+    alias = l1_image_tag(base_image)
+    if _image_exists(alias):
+        return alias
+    build_base_images(
+        base_image=base_image,
+        family=family,
+        agents=agents,
+        tag_as_default=True,
+    )
+    return alias

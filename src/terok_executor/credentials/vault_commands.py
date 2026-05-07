@@ -60,44 +60,38 @@ def _is_injected_credentials_file(path: Path) -> bool:
 
     Any parse error or unexpected structure → ``False`` (treat as real leak).
     """
-    import json
-
     from terok_sandbox import PHANTOM_CREDENTIALS_MARKER
 
+    from .vendor_files import RawClaudeCredentialsFile, load_vendor_json
+
     try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-        if not isinstance(data, dict):
-            return False
-        oauth = data.get("claudeAiOauth", {})
-        if not isinstance(oauth, dict):
-            return False
-        return oauth.get("accessToken") == PHANTOM_CREDENTIALS_MARKER and not oauth.get(
-            "refreshToken"
-        )
-    except (json.JSONDecodeError, OSError, ValueError):
+        cred = load_vendor_json(RawClaudeCredentialsFile, path)
+    except ValueError:
         return False
+    if cred is None or cred.claudeAiOauth is None:
+        return False
+    oauth = cred.claudeAiOauth
+    return oauth.accessToken == PHANTOM_CREDENTIALS_MARKER and not oauth.refreshToken
 
 
 def _is_injected_codex_auth_file(path: Path) -> bool:
     """Check whether *path* is a terok-injected shared Codex ``auth.json``."""
-    import json
-
     from terok_sandbox import CODEX_SHARED_OAUTH_MARKER
 
+    from .vendor_files import RawCodexAuthFile, load_vendor_json
+
     try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-        if not isinstance(data, dict):
-            return False
-        tokens = data.get("tokens", {})
-        if not isinstance(tokens, dict):
-            return False
-        return (
-            tokens.get("access_token") == CODEX_SHARED_OAUTH_MARKER
-            and tokens.get("refresh_token") == CODEX_SHARED_OAUTH_MARKER
-            and not data.get("OPENAI_API_KEY")
-        )
-    except (json.JSONDecodeError, OSError, ValueError):
+        cred = load_vendor_json(RawCodexAuthFile, path)
+    except ValueError:
         return False
+    if cred is None or cred.tokens is None:
+        return False
+    tokens = cred.tokens
+    return (
+        tokens.access_token == CODEX_SHARED_OAUTH_MARKER
+        and tokens.refresh_token == CODEX_SHARED_OAUTH_MARKER
+        and not cred.OPENAI_API_KEY
+    )
 
 
 def scan_leaked_credentials(mounts_base: Path) -> list[tuple[str, Path]]:

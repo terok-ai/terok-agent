@@ -26,9 +26,16 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from rich.console import Console
 from terok_sandbox import CODEX_SHARED_OAUTH_MARKER, PHANTOM_CREDENTIALS_MARKER
 
 from terok_executor._util import podman_userns_args
+
+# Two consoles so colored success messages flow to stdout while
+# colored errors / warnings flow to stderr.  Rich auto-disables colors
+# on non-TTY streams and honors ``NO_COLOR=1``.
+_out = Console()
+_err = Console(stderr=True)
 
 # ── Vocabulary ──
 
@@ -126,16 +133,19 @@ def authenticate(
     provider: str,
     *,
     mounts_dir: Path,
-    image: str,
+    image: str | Callable[[], str] | None = None,
     expose_token: bool = False,
+    oauth_enabled: bool = True,
 ) -> None:
     """Run the auth flow for *provider*, optionally scoped to a project.
 
-    Dispatches based on the provider's ``modes`` field:
+    Dispatches based on the *effective* mode set — what the provider
+    declares in the roster (``modes:``) intersected with what the
+    caller has actually permitted via *oauth_enabled*:
 
-    - **api_key only**: prompt for key, store directly (no container)
+    - **api_key only** (or OAuth disabled by gate): prompt for key, store directly
     - **oauth only**: launch container with vendor CLI
-    - **both**: ask user to choose, then dispatch accordingly
+    - **both**: ask the user to choose, then dispatch accordingly
 
     Args:
         project_id: Project identifier used for container naming and the
@@ -144,21 +154,43 @@ def authenticate(
             ``host-auth-<provider>`` name.
         provider: Auth provider name (e.g. ``"claude"``).
         mounts_dir: Base directory for shared config bind-mounts.
-        image: Container image to use for the auth container.
+        image: Container image for the OAuth container.  Either a tag
+            string (eager) or a zero-arg callable returning the tag
+            (lazy — invoked only when the user actually chooses the
+            OAuth path).  ``None`` is fine for API-key-only providers,
+            where no container is launched.  Use the lazy form to avoid
+            paying the L1 build cost when the user might pick API key
+            from the OAuth-or-API-key prompt.
         expose_token: When True, copy the real credential files into
             the shared mount instead of writing a phantom marker.  Used
             by tier 3 (``expose_oauth_token``) where containers need
             the actual token.
+        oauth_enabled: External gate for the OAuth path.  ``True``
+            (default) means the roster's ``modes`` list is honored
+            verbatim.  ``False`` instructs the function to skip the
+            OAuth prompt and go straight to the API-key flow regardless
+            of what the roster declares — terok passes ``False`` for
+            providers whose OAuth path requires unset config flags
+            (e.g. ``agent.codex.allow_oauth=true`` plus ``experimental:
+            true``).  When the provider declares only OAuth and the
+            gate is closed, raises ``SystemExit`` with a clear hint.
 
-    Raises ``SystemExit`` if the provider name is unknown.
+    Raises ``SystemExit`` if the provider name is unknown or no usable
+    auth mode remains after gating.
     """
     info = AUTH_PROVIDERS.get(provider)
     if not info:
         available = ", ".join(AUTH_PROVIDERS)
         raise SystemExit(f"Unknown auth provider: {provider}. Available: {available}")
 
-    if info.supports_oauth and info.supports_api_key:
-        # Both modes — let the user choose
+    # Gating: a provider's roster may declare OAuth, but the deployment
+    # may not allow it (terok's ``allow_oauth`` + ``experimental`` gate).
+    has_oauth = info.supports_oauth and oauth_enabled
+    has_api_key = info.supports_api_key
+
+    if has_oauth and has_api_key:
+        # Both modes — let the user choose first; only resolve the image
+        # (and trigger any on-demand L1 build) if the user picks OAuth.
         print(f"Authenticate {info.label}:\n")
         print("  1. OAuth / interactive login (launches container)")
         print("  2. API key (paste key, no container needed)")
@@ -168,21 +200,54 @@ def authenticate(
             key = _prompt_api_key(info)
             store_api_key(provider, key)
             return
-        # choice == "1" or anything else → OAuth
         _run_auth_container(
-            project_id, info, mounts_dir=mounts_dir, image=image, expose_token=expose_token
+            project_id,
+            info,
+            mounts_dir=mounts_dir,
+            image=_resolve_image(image, provider),
+            expose_token=expose_token,
         )
 
-    elif info.supports_api_key:
-        # API key only — fast path, no container
+    elif has_api_key:
+        # API key only — fast path, no container, image never resolved.
+        # Reaches here either because the provider declares only api_key,
+        # or because the OAuth gate is closed.
         key = _prompt_api_key(info)
         store_api_key(provider, key)
 
-    else:
-        # OAuth only
+    elif has_oauth:
+        # OAuth only — image is required.
         _run_auth_container(
-            project_id, info, mounts_dir=mounts_dir, image=image, expose_token=expose_token
+            project_id,
+            info,
+            mounts_dir=mounts_dir,
+            image=_resolve_image(image, provider),
+            expose_token=expose_token,
         )
+
+    else:
+        # Provider declares only OAuth and the caller's gate is closed.
+        raise SystemExit(
+            f"Auth for {provider!r} requires OAuth, but it is disabled by "
+            f"the caller's gating policy.  For terok this typically means "
+            f"the experimental flag and/or the provider-specific "
+            f"allow_oauth/expose_oauth_token config keys are unset."
+        )
+
+
+def _resolve_image(image: str | Callable[[], str] | None, provider: str) -> str:
+    """Coerce *image* — eager string, lazy callable, or ``None`` — to a tag.
+
+    ``None`` means the caller didn't supply one and the OAuth path is
+    actually about to launch a container; that is a programming error,
+    not a user-recoverable one — raise.
+    """
+    if image is None:
+        raise ValueError(
+            f"OAuth auth for {provider!r} needs an L1 image; "
+            "pass image=<tag> or image=<callable returning tag>."
+        )
+    return image() if callable(image) else image
 
 
 def store_api_key(
@@ -367,12 +432,11 @@ def _capture_credentials(
     try:
         cred_data = extract_credential(provider_name, auth_dir)
     except Exception as exc:
-        print(
-            f"\nWarning [auth]: could not extract credentials for {provider_name} "
-            f"from {auth_dir}: {type(exc).__name__}: {exc}",
-            file=sys.stderr,
+        _err.print(
+            f"\n[red]Error [auth]: could not extract credentials for {provider_name} "
+            f"from {auth_dir}: {type(exc).__name__}: {exc}[/red]"
         )
-        print("The auth flow completed but credentials were not captured.", file=sys.stderr)
+        _err.print("[red]The auth flow completed but credentials were not captured.[/red]")
         print(
             "You may need to re-authenticate or check the credential file format.",
             file=sys.stderr,
@@ -393,7 +457,10 @@ def _capture_credentials(
     exposed_directly = expose_token and post_capture is not None
 
     if exposed_directly:
-        print(f"\nCredentials for {provider_name} bypassing vault DB (exposed directly)")
+        _out.print(
+            f"\n[green]Credentials for {provider_name} "
+            "bypassing vault DB (exposed directly)[/green]"
+        )
     else:
         try:
             from terok_sandbox import CredentialDB, SandboxConfig
@@ -402,18 +469,19 @@ def _capture_credentials(
             db = CredentialDB(cfg.db_path)
             try:
                 db.store_credential(credential_set, provider_name, cred_data)
-                print(f"\nCredentials captured for {provider_name} (set: {credential_set})")
+                _out.print(
+                    f"\n[green]Credentials captured for {provider_name} "
+                    f"(set: {credential_set})[/green]"
+                )
             finally:
                 db.close()
         except Exception as exc:
-            print(
-                f"\nWarning [auth]: failed to store credentials for {provider_name} "
-                f"in vault DB: {type(exc).__name__}: {exc}",
-                file=sys.stderr,
+            _err.print(
+                f"\n[red]Error [auth]: failed to store credentials for {provider_name} "
+                f"in vault DB: {type(exc).__name__}: {exc}[/red]"
             )
-            print(
-                "The auth flow completed but credentials were not saved to the vault DB.",
-                file=sys.stderr,
+            _err.print(
+                "[red]The auth flow completed but credentials were not saved to the vault DB.[/red]"
             )
             return
 
@@ -427,7 +495,9 @@ def _capture_credentials(
         try:
             post_capture(auth_dir, mounts_base, cred_data, expose_token)
         except Exception as exc:  # noqa: BLE001
-            print(f"Warning: could not reconcile {provider_name} mount: {exc}")
+            _err.print(
+                f"[yellow]Warning: could not reconcile {provider_name} mount: {exc}[/yellow]"
+            )
 
     # Apply declarative post-capture state from roster YAML
     if auth_provider and auth_provider.post_capture_state:
@@ -438,9 +508,9 @@ def _capture_credentials(
                 mounts_base,
             )
         except Exception as exc:  # noqa: BLE001
-            print(
-                f"Warning: could not apply post_capture_state for {provider_name}: {exc}",
-                file=sys.stderr,
+            _err.print(
+                f"[yellow]Warning: could not apply post_capture_state for "
+                f"{provider_name}: {exc}[/yellow]"
             )
 
 
@@ -503,15 +573,15 @@ def _codex_oauth_mount_writer(
         if not src.is_file():
             raise FileNotFoundError(f"No auth.json in {auth_dir}")
         _write_bytes_nofollow(dest_file, src.read_bytes())
-        print("Real auth.json copied to shared Codex config mount.")
-        print(
-            "\nNote: Codex OAuth token is EXPOSED in the shared mount."
+        _out.print("[green]Real auth.json copied to shared Codex config mount.[/green]")
+        _out.print(
+            "[yellow]\nNote: Codex OAuth token is EXPOSED in the shared mount."
             "\n      Every task container can read the real token."
-            "\n      The vault does NOT protect it."
+            "\n      The vault does NOT protect it.[/yellow]"
         )
     else:
         _write_codex_phantom_auth_json(cred_data, dest_file)
-        print("Phantom auth.json written to shared Codex config mount.")
+        _out.print("[green]Phantom auth.json written to shared Codex config mount.[/green]")
         print(
             "\nNote: Codex OAuth credential is shared across all task containers."
             "\n      API calls are routed through the vault — the real"
@@ -589,6 +659,15 @@ def _build_codex_shared_id_token(raw_jwt: str) -> str:
     auth = payload.get("https://api.openai.com/auth")
 
     safe_payload: dict[str, object] = {"exp": 253402300799}
+    # Codex 0.123+ TUI bootstrap calls ``account/read`` (an internal
+    # JSON-RPC), which fails unless both ``email`` AND ``chatgpt_plan_type``
+    # parse out of the id_token JWT (codex-rs/login/src/token_data.rs:139).
+    # ``chatgpt_plan_type`` already rides through under
+    # ``https://api.openai.com/auth`` below; here we additionally preserve
+    # the top-level ``email`` claim so the TUI's "logged in as ..." surface
+    # populates and bootstrap doesn't error out.
+    if isinstance(payload.get("email"), str):
+        safe_payload["email"] = payload["email"]
     if isinstance(auth, dict):
         safe_auth = {
             key: auth[key]

@@ -4,7 +4,7 @@ build-backend = "poetry_dynamic_versioning.backend"
 
 [tool.poetry]
 name = "terok-executor"
-version = "0.0.135"
+version = "0.0.136"
 description = "Single-agent task runner for hardened Podman containers"
 readme = "README.md"
 license = "Apache-2.0"
@@ -30,6 +30,7 @@ Jinja2 = ">=3.1"
 tomli-w = ">=1.0"
 pwinput = ">=1.0.3"
 pydantic = ">=2.9"
+rich = ">=13.0"
 agent-client-protocol = ">=0.7"
 
 [tool.poetry.group.dev.dependencies]
