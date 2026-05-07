@@ -30,10 +30,11 @@ contract" (loud).  See those docstrings for the exact rules.
 from __future__ import annotations
 
 import json
+import sys
 from pathlib import Path
 from typing import Annotated
 
-from pydantic import BaseModel, BeforeValidator, ConfigDict, Field, RootModel
+from pydantic import BaseModel, BeforeValidator, ConfigDict, Field, RootModel, ValidationError
 
 # ── Reusable building blocks ──────────────────────────────────────────────
 
@@ -78,7 +79,10 @@ class RawClaudeOauthBlock(_VendorFile):
     accessToken: str = ""  # noqa: N815 — vendor uses camelCase
     refreshToken: str = ""  # noqa: N815
     expiresAt: JsTimestamp = None  # noqa: N815
-    scopes: str = ""
+    # Claude Code emits ``scopes`` as a JSON array of strings.  Older builds
+    # (and the empty-default fallthrough path) used a single string; accept
+    # both rather than constrain the field artificially.
+    scopes: list[str] | str = ""
     subscriptionType: str | None = None  # noqa: N815
     rateLimitTier: str | None = None  # noqa: N815
 
@@ -205,6 +209,21 @@ def load_vendor_yaml[T: BaseModel](model: type[T], path: Path) -> T | None:
     return model.model_validate(data)
 
 
+def warn_drift(path: Path, exc: ValidationError) -> None:
+    """Print a stderr breadcrumb when a vendor file fails validation.
+
+    Extractors with their own fallback path (e.g. Claude tries OAuth then
+    API key) catch [`ValidationError`][pydantic.ValidationError] silently.
+    Without this breadcrumb, a vendor renaming a field we depend on would
+    surface only as a generic "no creds found" with no diagnostic trail.
+    """
+    print(
+        f"Warning [credentials]: {path} has unexpected shape — "
+        f"vendor format may have changed.\n  {exc}",
+        file=sys.stderr,
+    )
+
+
 __all__ = [
     "JsTimestamp",
     "RawApiKeyJsonFile",
@@ -218,4 +237,5 @@ __all__ = [
     "RawGlabHostBlock",
     "load_vendor_json",
     "load_vendor_yaml",
+    "warn_drift",
 ]

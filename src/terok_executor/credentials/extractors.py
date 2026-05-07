@@ -29,6 +29,7 @@ from .vendor_files import (
     RawGlabConfigFile,
     load_vendor_json,
     load_vendor_yaml,
+    warn_drift,
 )
 
 # ---------------------------------------------------------------------------
@@ -45,10 +46,14 @@ def extract_claude_oauth(base_dir: Path) -> dict:
     fall back to ``config.json``'s ``api_key`` field.
     """
     # OAuth-then-API-key fallback is per-design; suppress shape errors on
-    # ``.credentials.json`` so a corrupt OAuth file doesn't block API-key login.
+    # either file so a corrupt one doesn't block the alternative.  The
+    # ``warn_drift`` breadcrumb keeps format-drift surfaces visible despite
+    # the suppression.
+    cred_path = base_dir / ".credentials.json"
     try:
-        cred = load_vendor_json(RawClaudeCredentialsFile, base_dir / ".credentials.json")
-    except ValidationError:
+        cred = load_vendor_json(RawClaudeCredentialsFile, cred_path)
+    except ValidationError as exc:
+        warn_drift(cred_path, exc)
         cred = None
     if cred is not None and cred.claudeAiOauth and cred.claudeAiOauth.accessToken:
         oauth = cred.claudeAiOauth
@@ -62,9 +67,11 @@ def extract_claude_oauth(base_dir: Path) -> dict:
             "rate_limit_tier": oauth.rateLimitTier,
         }
 
+    cfg_path = base_dir / "config.json"
     try:
-        api_key_cfg = load_vendor_json(RawApiKeyJsonFile, base_dir / "config.json")
-    except ValidationError:
+        api_key_cfg = load_vendor_json(RawApiKeyJsonFile, cfg_path)
+    except ValidationError as exc:
+        warn_drift(cfg_path, exc)
         api_key_cfg = None
     if api_key_cfg is not None and api_key_cfg.api_key:
         return {"type": "api_key", "key": api_key_cfg.api_key}

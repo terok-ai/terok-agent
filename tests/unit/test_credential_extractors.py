@@ -58,6 +58,35 @@ class TestClaudeOAuth:
         assert result["subscription_type"] == "max"
         assert result["rate_limit_tier"] == "max_5x"
 
+    def test_extracts_with_scopes_as_list(self, tmp_path: Path) -> None:
+        """Real Claude Code emits ``scopes`` as a JSON array — not a string.
+
+        Regression guard for a real auth file shape:
+        ``"scopes": ["user:file_upload", "user:inference", ...]``.
+        """
+        cred = {
+            "claudeAiOauth": {
+                "accessToken": "sk-ant-real",
+                "refreshToken": "rt-real",
+                "expiresAt": 1778152112427,
+                "scopes": [
+                    "user:file_upload",
+                    "user:inference",
+                    "user:mcp_servers",
+                    "user:profile",
+                    "user:sessions:claude_code",
+                ],
+                "subscriptionType": "max",
+                "rateLimitTier": "default_claude_max_20x",
+            }
+        }
+        (tmp_path / ".credentials.json").write_text(json.dumps(cred))
+        result = extract_claude_oauth(tmp_path)
+        assert result["type"] == "oauth"
+        assert result["access_token"] == "sk-ant-real"
+        assert result["scopes"] == cred["claudeAiOauth"]["scopes"]
+        assert result["subscription_type"] == "max"
+
     def test_missing_subscription_metadata_defaults(self, tmp_path: Path) -> None:
         """Missing subscription fields default to empty/None."""
         cred = {"claudeAiOauth": {"accessToken": "sk-ant-no-meta", "refreshToken": "rt"}}
@@ -384,6 +413,24 @@ class TestVendorFormatDrift:
         result = extract_claude_oauth(tmp_path)
         assert result["type"] == "api_key"
         assert result["key"] == "sk-fallback"
+
+    def test_claude_drift_emits_stderr_breadcrumb(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """Suppressed ValidationError still leaves a stderr trail naming the file.
+
+        Without the breadcrumb, format drift on Claude's OAuth file would
+        surface only as a generic "no credentials found" — making vendor
+        format changes effectively undebuggable.
+        """
+        (tmp_path / ".credentials.json").write_text(
+            json.dumps({"claudeAiOauth": ["not", "a", "block"]})
+        )
+        (tmp_path / "config.json").write_text(json.dumps({"api_key": "sk-fallback"}))
+        extract_claude_oauth(tmp_path)
+        stderr = capsys.readouterr().err
+        assert ".credentials.json" in stderr
+        assert "vendor format may have changed" in stderr
 
     def test_codex_tokens_block_type_drift_raises(self, tmp_path: Path) -> None:
         """``tokens: "..."`` (string instead of object) surfaces a clear error."""
