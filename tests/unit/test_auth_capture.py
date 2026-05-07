@@ -525,11 +525,22 @@ class TestCodexOAuthMountWriter:
         assert json.loads(dest.read_text()) == payload
 
     def test_default_writes_phantom_preserving_id_token(self, tmp_path: Path) -> None:
-        """expose_token=False writes a phantom auth.json with synthetic id_token claims."""
+        """expose_token=False writes a phantom auth.json with synthetic id_token claims.
+
+        Codex's TUI bootstrap calls ``account/read`` (an internal
+        JSON-RPC), which fails unless both ``email`` AND
+        ``chatgpt_plan_type`` parse out of the id_token JWT — see
+        ``codex-rs/login/src/token_data.rs:139`` and
+        ``model-provider/src/provider.rs::account_state``.  The
+        synthetic JWT must therefore preserve the top-level ``email``
+        claim alongside the ``chatgpt_*`` namespace; everything else
+        (PII outside that contract, opaque internal claims) is dropped.
+        """
         mounts = tmp_path / "mounts"
         real_id_token = _fake_jwt(
             {
                 "email": "coder@example.com",
+                "extra_internal_claim": "dropped",
                 "https://api.openai.com/auth": {
                     "chatgpt_plan_type": "pro",
                     "chatgpt_account_id": "org-42",
@@ -545,9 +556,14 @@ class TestCodexOAuthMountWriter:
         assert tokens["id_token"] != real_id_token
         assert len(tokens["id_token"].split(".")) == 3
         synthetic_claims = _jwt_payload(tokens["id_token"])
-        assert "email" not in synthetic_claims
+        # Email survives — required by Codex's account/read.
+        assert synthetic_claims["email"] == "coder@example.com"
+        # The ``auth`` namespace stays minimal: only the well-known keys.
         assert "https://api.openai.com/profile" not in synthetic_claims
         assert synthetic_claims["https://api.openai.com/auth"]["chatgpt_account_id"] == "org-42"
+        assert synthetic_claims["https://api.openai.com/auth"]["chatgpt_plan_type"] == "pro"
+        # Anything outside the documented surface is dropped.
+        assert "extra_internal_claim" not in synthetic_claims
         assert tokens["account_id"] == "org-42"
         assert tokens["access_token"] == CODEX_SHARED_OAUTH_MARKER
         assert tokens["refresh_token"] == CODEX_SHARED_OAUTH_MARKER
@@ -555,6 +571,27 @@ class TestCodexOAuthMountWriter:
         # last_refresh is pinned far in the future so the CLI's 8-day
         # staleness check never fires an in-container refresh attempt.
         assert data["last_refresh"] == "9999-01-01T00:00:00Z"
+
+    def test_default_omits_email_when_upstream_lacks_it(self, tmp_path: Path) -> None:
+        """If the upstream JWT has no email claim, the synthetic JWT also omits it.
+
+        Forwarding ``email: null`` would fail Codex's ``Option<String>``
+        deserializer; just leave the field out entirely.
+        """
+        mounts = tmp_path / "mounts"
+        real_id_token = _fake_jwt(
+            {
+                "https://api.openai.com/auth": {"chatgpt_plan_type": "pro"},
+            }
+        )
+        cred = {"id_token": real_id_token}
+
+        _codex_oauth_mount_writer(tmp_path, mounts, cred, expose_token=False)
+
+        synthetic_claims = _jwt_payload(
+            json.loads((mounts / "_codex-config" / "auth.json").read_text())["tokens"]["id_token"]
+        )
+        assert "email" not in synthetic_claims
 
     def test_default_overwrites_stale_real_auth_json(self, tmp_path: Path) -> None:
         """expose_token=False replaces a prior real auth.json with the phantom."""

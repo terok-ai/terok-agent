@@ -630,6 +630,15 @@ def _build_codex_shared_id_token(raw_jwt: str) -> str:
     auth = payload.get("https://api.openai.com/auth")
 
     safe_payload: dict[str, object] = {"exp": 253402300799}
+    # Codex 0.123+ TUI bootstrap calls ``account/read`` (an internal
+    # JSON-RPC), which fails unless both ``email`` AND ``chatgpt_plan_type``
+    # parse out of the id_token JWT (codex-rs/login/src/token_data.rs:139).
+    # ``chatgpt_plan_type`` already rides through under
+    # ``https://api.openai.com/auth`` below; here we additionally preserve
+    # the top-level ``email`` claim so the TUI's "logged in as ..." surface
+    # populates and bootstrap doesn't error out.
+    if isinstance(payload.get("email"), str):
+        safe_payload["email"] = payload["email"]
     if isinstance(auth, dict):
         safe_auth = {
             key: auth[key]
