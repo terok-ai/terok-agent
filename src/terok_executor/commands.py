@@ -337,8 +337,14 @@ def _handle_run_tool(
     print(f"Container: {cname}")
 
 
-def _handle_auth(*, agent: str, api_key: str | None = None) -> None:
+def _handle_auth(
+    *,
+    agent: str,
+    api_key: str | None = None,
+    base_image: str | None = None,
+) -> None:
     """Run auth flow for an agent."""
+    from .container.build import DEFAULT_BASE_IMAGE
     from .credentials.auth import AUTH_PROVIDERS, authenticate, store_api_key
 
     if api_key is not None:
@@ -349,11 +355,10 @@ def _handle_auth(*, agent: str, api_key: str | None = None) -> None:
             raise SystemExit(f"Unknown provider: {agent}. Available: {available}")
         store_api_key(agent, api_key.strip())
     else:
-        from .container.build import l1_image_tag
-
-        image = l1_image_tag("ubuntu:24.04")
+        from .container.build import ensure_default_l1
         from .paths import mounts_dir
 
+        image = ensure_default_l1(base_image or DEFAULT_BASE_IMAGE)
         authenticate(None, agent, mounts_dir=mounts_dir(), image=image)
 
     # Write vault URLs to shared config files (e.g. Vibe config.toml, gh config.yml)
@@ -689,6 +694,10 @@ AUTH_COMMAND = CommandDef(
     args=(
         ArgDef(name="agent", help="Agent or tool name (claude, codex, gh, ...)"),
         ArgDef(name="--api-key", help="Store an API key directly (skip interactive auth)"),
+        ArgDef(
+            name="--base-image",
+            help="Override the L1 base image (default: ubuntu:24.04 — set per-host once F44 ships)",
+        ),
     ),
 )
 

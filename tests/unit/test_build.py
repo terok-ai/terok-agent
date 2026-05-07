@@ -744,6 +744,141 @@ class TestStageHelpFragments:
 
 
 # ---------------------------------------------------------------------------
+# Default-alias semantics + image_agents helper
+# ---------------------------------------------------------------------------
+
+
+class TestDefaultAliasTagging:
+    """Verify the default-alias tag is only applied when explicitly requested.
+
+    The unsuffixed ``terok-l1-cli:<base>`` tag is reserved for L1 images
+    that hold the user's configured default agent set — auth flows
+    depend on that contract.  Project / per-agent / partial builds must
+    leave the alias alone so a stale partial L1 can never end up
+    routed to ``terok auth <provider>``.
+    """
+
+    def test_default_build_omits_alias(self, tmp_path: Path) -> None:
+        from unittest.mock import patch
+
+        from terok_executor.container.build import build_base_images
+
+        build_dir = tmp_path / "ctx"
+        with (
+            patch("terok_executor.container.build._check_podman"),
+            patch("terok_executor.container.build._image_exists", return_value=False),
+            patch("subprocess.run") as mock_run,
+        ):
+            build_base_images(build_dir=build_dir)
+        l1_cmd = mock_run.call_args_list[1][0][0]
+        # No -t terok-l1-cli:ubuntu-24.04 (the unsuffixed alias) on the L1 build
+        assert "terok-l1-cli:ubuntu-24.04" not in l1_cmd
+
+    def test_tag_as_default_includes_alias(self, tmp_path: Path) -> None:
+        from unittest.mock import patch
+
+        from terok_executor.container.build import build_base_images
+
+        build_dir = tmp_path / "ctx"
+        with (
+            patch("terok_executor.container.build._check_podman"),
+            patch("terok_executor.container.build._image_exists", return_value=False),
+            patch("subprocess.run") as mock_run,
+        ):
+            build_base_images(build_dir=build_dir, tag_as_default=True)
+        l1_cmd = mock_run.call_args_list[1][0][0]
+        # Both the suffixed tag AND the unsuffixed alias appear as -t targets
+        assert "terok-l1-cli:ubuntu-24.04" in l1_cmd
+
+
+class TestImageAgents:
+    """Verify the ``ai.terok.agents`` OCI label reader."""
+
+    def test_reads_label_csv(self) -> None:
+        from unittest.mock import MagicMock, patch
+
+        from terok_executor.container.build import image_agents
+
+        completed = MagicMock(returncode=0, stdout="claude,codex,gh\n")
+        with patch("subprocess.run", return_value=completed):
+            assert image_agents("terok-l1-cli:ubuntu-24.04") == {"claude", "codex", "gh"}
+
+    def test_missing_image_returns_empty(self) -> None:
+        from unittest.mock import MagicMock, patch
+
+        from terok_executor.container.build import image_agents
+
+        with patch("subprocess.run", return_value=MagicMock(returncode=1, stdout="")):
+            assert image_agents("missing:tag") == set()
+
+    def test_empty_label_returns_empty(self) -> None:
+        from unittest.mock import MagicMock, patch
+
+        from terok_executor.container.build import image_agents
+
+        with patch("subprocess.run", return_value=MagicMock(returncode=0, stdout="\n")):
+            assert image_agents("nonsense:tag") == set()
+
+    def test_inspect_failure_returns_empty(self) -> None:
+        from unittest.mock import patch
+
+        from terok_executor.container.build import image_agents
+
+        with patch("subprocess.run", side_effect=FileNotFoundError):
+            assert image_agents("anything") == set()
+
+
+class TestEnsureDefaultL1:
+    """Verify the auth-image picker that callers use to resolve L1."""
+
+    def test_returns_alias_if_present(self) -> None:
+        from unittest.mock import patch
+
+        from terok_executor.container.build import ensure_default_l1
+
+        with (
+            patch("terok_executor.container.build._image_exists", return_value=True),
+            patch("terok_executor.container.build.build_base_images") as mock_build,
+        ):
+            tag = ensure_default_l1("ubuntu:24.04")
+        assert tag == "terok-l1-cli:ubuntu-24.04"
+        mock_build.assert_not_called()
+
+    def test_builds_default_when_alias_missing(self) -> None:
+        from unittest.mock import patch
+
+        from terok_executor.container.build import ensure_default_l1
+
+        with (
+            patch("terok_executor.container.build._image_exists", return_value=False),
+            patch("terok_executor.container.build.build_base_images") as mock_build,
+        ):
+            tag = ensure_default_l1("ubuntu:24.04")
+        assert tag == "terok-l1-cli:ubuntu-24.04"
+        mock_build.assert_called_once()
+        kwargs = mock_build.call_args.kwargs
+        assert kwargs["tag_as_default"] is True
+        assert kwargs["agents"] == "all"
+
+    def test_threads_user_agent_selection(self) -> None:
+        from unittest.mock import patch
+
+        from terok_executor.container.build import ensure_default_l1
+
+        with (
+            patch("terok_executor.container.build._image_exists", return_value=False),
+            patch("terok_executor.container.build.build_base_images") as mock_build,
+        ):
+            ensure_default_l1("fedora:43", agents=("claude", "codex"))
+        kwargs = mock_build.call_args.kwargs
+        # The user's configured selection makes it through verbatim — that's the
+        # whole point of the parameter; it propagates into the ``image.agents``
+        # contract that terok eventually wires into the alias.
+        assert kwargs["agents"] == ("claude", "codex")
+        assert kwargs["base_image"] == "fedora:43"
+
+
+# ---------------------------------------------------------------------------
 # Sidecar image build
 # ---------------------------------------------------------------------------
 

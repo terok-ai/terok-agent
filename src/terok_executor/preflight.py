@@ -58,7 +58,9 @@ def run_preflight(
         all_ready = False
 
     _offer_ssh_key(interactive=interactive, assume_yes=assume_yes)
-    _offer_credentials(provider, interactive=interactive, assume_yes=assume_yes)
+    _offer_credentials(
+        provider, base_image=base_image, interactive=interactive, assume_yes=assume_yes
+    )
     _note_shield_bypass()
 
     if all_ready and interactive:
@@ -130,13 +132,15 @@ def _offer_ssh_key(*, interactive: bool, assume_yes: bool) -> None:
         print("      Without a gate SSH key, git push via the gate won't work.")
 
 
-def _offer_credentials(provider: str, *, interactive: bool, assume_yes: bool) -> None:
+def _offer_credentials(
+    provider: str, *, base_image: str, interactive: bool, assume_yes: bool
+) -> None:
     """Authenticate *provider* when missing; login-on-first-turn is the consequence."""
     r = check_credentials(provider)
     if not r.ok and interactive:
         print(f"  {r.name}... {r.message}")
         if _confirm(f"Authenticate {provider} now?", assume_yes=assume_yes) and (
-            _fix_credentials(provider)
+            _fix_credentials(provider, base_image=base_image)
         ):
             r = check_credentials(provider)
     _print_step(r)
@@ -325,14 +329,14 @@ def _fix_ssh_key(scope: str = "standalone") -> bool:
     return True
 
 
-def _fix_credentials(provider: str) -> bool:
+def _fix_credentials(provider: str, *, base_image: str) -> bool:
     """Run the interactive authentication flow for *provider*."""
-    from terok_executor.container.build import l1_image_tag
+    from terok_executor.container.build import ensure_default_l1
     from terok_executor.credentials.auth import authenticate
     from terok_executor.credentials.vault_config import write_vault_config
     from terok_executor.paths import mounts_dir
 
-    image = l1_image_tag("ubuntu:24.04")
+    image = ensure_default_l1(base_image)
     try:
         authenticate(None, provider, mounts_dir=mounts_dir(), image=image)
     except SystemExit:
