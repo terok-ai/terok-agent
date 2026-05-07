@@ -481,6 +481,21 @@ class TestTemplateRendering:
         content = render_l0("nvidia/cuda:12.4.1-devel-ubuntu24.04")
         assert "FROM" in content
 
+    def test_l0_forces_shadow_entry_after_rename(self) -> None:
+        # Bases whose UID-1000 user has no /etc/shadow row (quay.io/podman/stable,
+        # fedora:43) silently produce a renamed dev user that pam_unix can't look
+        # up — sudo then fails with "PAM account management error: Authentication
+        # service cannot retrieve authentication info".  ``usermod -p '!' dev``
+        # writes a locked shadow row regardless of what the base shipped.
+        content = render_l0()
+        assert "usermod -p '!' dev" in content
+
+    def test_l0_validates_sudoers(self) -> None:
+        # ``visudo -cf`` fails the build on a malformed sudoers drop-in, which
+        # is much friendlier than discovering it at first sudo.
+        content = render_l0()
+        assert "visudo -cf /etc/sudoers.d/dev" in content
+
     def test_l1_is_valid_dockerfile(self) -> None:
         content = render_l1("terok-l0:test", family="deb")
         assert content.startswith("# syntax=docker")

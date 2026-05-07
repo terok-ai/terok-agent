@@ -38,6 +38,12 @@ RUN set -eux; \
       if getent group "$uid_owner" >/dev/null; then groupmod -n dev "$uid_owner" || true; fi; \
       usermod -l dev "$uid_owner"; \
       usermod -d /home/dev -m dev; \
+      # usermod -l only updates /etc/passwd.  On bases whose UID-1000 user \
+      # ships no /etc/shadow entry (e.g. quay.io/podman/stable, fedora:43), \
+      # pam_unix later fails getspnam("dev") and breaks sudo with a confusing \
+      # "Authentication service cannot retrieve authentication info" error. \
+      # Force a locked shadow row so the account exists for PAM to look up. \
+      usermod -p '!' dev; \
       # usermod -l / groupmod -n don't touch /etc/sub{u,g}id; rewrite \
       # those entries so pre-configured rootless ranges (e.g. the podman \
       # image's `podman:100000:65536`) keep working under the new name. \
@@ -52,8 +58,9 @@ RUN set -eux; \
       useradd -m -u 1000 -g dev -s /bin/bash dev; \
     fi; \
     if [ "$(id -u dev)" != "1000" ]; then usermod -u 1000 dev; fi; \
-    printf 'dev ALL=(ALL) NOPASSWD:ALL\n' > /etc/sudoers.d/dev; \
+    echo 'dev ALL=(ALL) NOPASSWD: ALL' > /etc/sudoers.d/dev; \
     chmod 0440 /etc/sudoers.d/dev; \
+    visudo -cf /etc/sudoers.d/dev; \
     mkdir -p /workspace /home/dev/.ssh; \
     chown -R dev:dev /home/dev /workspace; \
     chmod 700 /home/dev/.ssh; \
