@@ -26,9 +26,16 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from rich.console import Console
 from terok_sandbox import CODEX_SHARED_OAUTH_MARKER, PHANTOM_CREDENTIALS_MARKER
 
 from terok_executor._util import podman_userns_args
+
+# Two consoles so colored success messages flow to stdout while
+# colored errors / warnings flow to stderr.  Rich auto-disables colors
+# on non-TTY streams and honors ``NO_COLOR=1``.
+_out = Console()
+_err = Console(stderr=True)
 
 # ── Vocabulary ──
 
@@ -367,12 +374,11 @@ def _capture_credentials(
     try:
         cred_data = extract_credential(provider_name, auth_dir)
     except Exception as exc:
-        print(
-            f"\nWarning [auth]: could not extract credentials for {provider_name} "
-            f"from {auth_dir}: {type(exc).__name__}: {exc}",
-            file=sys.stderr,
+        _err.print(
+            f"\n[red]Error [auth]: could not extract credentials for {provider_name} "
+            f"from {auth_dir}: {type(exc).__name__}: {exc}[/red]"
         )
-        print("The auth flow completed but credentials were not captured.", file=sys.stderr)
+        _err.print("[red]The auth flow completed but credentials were not captured.[/red]")
         print(
             "You may need to re-authenticate or check the credential file format.",
             file=sys.stderr,
@@ -393,7 +399,10 @@ def _capture_credentials(
     exposed_directly = expose_token and post_capture is not None
 
     if exposed_directly:
-        print(f"\nCredentials for {provider_name} bypassing vault DB (exposed directly)")
+        _out.print(
+            f"\n[green]Credentials for {provider_name} "
+            "bypassing vault DB (exposed directly)[/green]"
+        )
     else:
         try:
             from terok_sandbox import CredentialDB, SandboxConfig
@@ -402,18 +411,19 @@ def _capture_credentials(
             db = CredentialDB(cfg.db_path)
             try:
                 db.store_credential(credential_set, provider_name, cred_data)
-                print(f"\nCredentials captured for {provider_name} (set: {credential_set})")
+                _out.print(
+                    f"\n[green]Credentials captured for {provider_name} "
+                    f"(set: {credential_set})[/green]"
+                )
             finally:
                 db.close()
         except Exception as exc:
-            print(
-                f"\nWarning [auth]: failed to store credentials for {provider_name} "
-                f"in vault DB: {type(exc).__name__}: {exc}",
-                file=sys.stderr,
+            _err.print(
+                f"\n[red]Error [auth]: failed to store credentials for {provider_name} "
+                f"in vault DB: {type(exc).__name__}: {exc}[/red]"
             )
-            print(
-                "The auth flow completed but credentials were not saved to the vault DB.",
-                file=sys.stderr,
+            _err.print(
+                "[red]The auth flow completed but credentials were not saved to the vault DB.[/red]"
             )
             return
 
@@ -427,7 +437,9 @@ def _capture_credentials(
         try:
             post_capture(auth_dir, mounts_base, cred_data, expose_token)
         except Exception as exc:  # noqa: BLE001
-            print(f"Warning: could not reconcile {provider_name} mount: {exc}")
+            _err.print(
+                f"[yellow]Warning: could not reconcile {provider_name} mount: {exc}[/yellow]"
+            )
 
     # Apply declarative post-capture state from roster YAML
     if auth_provider and auth_provider.post_capture_state:
@@ -438,9 +450,9 @@ def _capture_credentials(
                 mounts_base,
             )
         except Exception as exc:  # noqa: BLE001
-            print(
-                f"Warning: could not apply post_capture_state for {provider_name}: {exc}",
-                file=sys.stderr,
+            _err.print(
+                f"[yellow]Warning: could not apply post_capture_state for "
+                f"{provider_name}: {exc}[/yellow]"
             )
 
 
@@ -503,15 +515,15 @@ def _codex_oauth_mount_writer(
         if not src.is_file():
             raise FileNotFoundError(f"No auth.json in {auth_dir}")
         _write_bytes_nofollow(dest_file, src.read_bytes())
-        print("Real auth.json copied to shared Codex config mount.")
-        print(
-            "\nNote: Codex OAuth token is EXPOSED in the shared mount."
+        _out.print("[green]Real auth.json copied to shared Codex config mount.[/green]")
+        _out.print(
+            "[yellow]\nNote: Codex OAuth token is EXPOSED in the shared mount."
             "\n      Every task container can read the real token."
-            "\n      The vault does NOT protect it."
+            "\n      The vault does NOT protect it.[/yellow]"
         )
     else:
         _write_codex_phantom_auth_json(cred_data, dest_file)
-        print("Phantom auth.json written to shared Codex config mount.")
+        _out.print("[green]Phantom auth.json written to shared Codex config mount.[/green]")
         print(
             "\nNote: Codex OAuth credential is shared across all task containers."
             "\n      API calls are routed through the vault — the real"

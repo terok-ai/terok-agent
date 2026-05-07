@@ -30,6 +30,7 @@ Jinja2 = ">=3.1"
 tomli-w = ">=1.0"
 pwinput = ">=1.0.3"
 pydantic = ">=2.9"
+rich = ">=13.0"
 agent-client-protocol = ">=0.7"
 
 [tool.poetry.group.dev.dependencies]

@@ -80,26 +80,26 @@ class TestCaptureCredentials:
         db.close()
         assert stored["key"] == "blab-key"
 
-    def test_extraction_failure_prints_warning(self, tmp_path: Path, capsys) -> None:
-        """Failed extraction prints a warning mentioning the provider."""
+    def test_extraction_failure_prints_error(self, tmp_path: Path, capsys) -> None:
+        """Failed extraction prints an error mentioning the provider."""
         # Empty dir — no credential file to extract
         _capture_credentials("claude", tmp_path, "default")
 
         err = capsys.readouterr().err
-        assert "Warning" in err
+        assert "Error" in err
         assert "claude" in err
         assert "not captured" in err
 
-    def test_unknown_provider_prints_warning(self, tmp_path: Path, capsys) -> None:
-        """Unknown provider prints a warning mentioning the provider name."""
+    def test_unknown_provider_prints_error(self, tmp_path: Path, capsys) -> None:
+        """Unknown provider prints an error mentioning the provider name."""
         _capture_credentials("unknown-agent", tmp_path, "default")
 
         err = capsys.readouterr().err
-        assert "Warning" in err
+        assert "Error" in err
         assert "unknown-agent" in err
 
-    def test_db_failure_prints_warning(self, tmp_path: Path, capsys) -> None:
-        """If DB storage fails, prints warning but doesn't raise."""
+    def test_db_failure_prints_error(self, tmp_path: Path, capsys) -> None:
+        """If DB storage fails, prints error but doesn't raise."""
         cred = {"claudeAiOauth": {"accessToken": "sk-test"}}
         (tmp_path / ".credentials.json").write_text(json.dumps(cred))
 
@@ -107,7 +107,7 @@ class TestCaptureCredentials:
             _capture_credentials("claude", tmp_path, "default")
 
         err = capsys.readouterr().err
-        assert "Warning" in err
+        assert "Error" in err
         assert "not saved" in err
 
     def test_custom_credential_set(self, tmp_path: Path) -> None:
