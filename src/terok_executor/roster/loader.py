@@ -59,9 +59,11 @@ changes to the roster schema, never per release."""
 
 @dataclass(frozen=True)
 class AgentRoster:
-    """Loaded roster of agents and tools from YAML definitions.
+    """Queryable view over the loaded set of agents and tools.
 
-    Provides the same query API as the legacy hardcoded dicts.
+    Returned by [`load_roster`][terok_executor.roster.loader.load_roster];
+    grouped accessors expose providers, auth providers, vault routes,
+    sidecar specs, install snippets, and help blurbs by name.
     """
 
     _providers: dict[str, AgentProvider] = field(default_factory=dict)
@@ -133,7 +135,7 @@ class AgentRoster:
         """Resolve a user-supplied selection into the full set of roster names to install.
 
         Accepts the literal string ``"all"`` (every roster entry that has an
-        [`InstallSpec`][terok_executor.roster.loader.InstallSpec]) or a tuple of names.  Expands ``depends_on``
+        [`InstallSpec`][terok_executor.roster.types.InstallSpec]) or a tuple of names.  Expands ``depends_on``
         transitively.  Returns the names sorted alphabetically — the canonical
         order used for the OCI label, the tag suffix, and the in-container
         manifest.
@@ -338,24 +340,21 @@ def load_roster() -> AgentRoster:
         except ValidationError as exc:
             raise ValueError(f"Agent {name!r}: invalid roster YAML\n{exc}") from exc
 
+        label = spec.resolve_label(name)
+        is_agent_kind = spec.kind not in ("tool", "runtime")
+
         if spec.kind != "runtime":
             all_names.append(name)
-
-        # Agent kinds (native, opencode, bridge) get an AgentProvider;
-        # tools and runtime entries only contribute auth/mounts.
-        if spec.kind not in ("tool", "runtime"):
+        if is_agent_kind:
             agent_names.append(name)
             providers[name] = spec.to_agent_provider(name)
 
-        # Credential file from the vault section — attached to whichever
-        # auth/mount entry shares the same host_dir.  Empty when absent.
         credential_file = spec.vault.credential_file if spec.vault else ""
 
-        # Auth: explicit auth section, or auto-derived from opencode config
         auth_prov: AuthProvider | None
         if spec.auth is not None:
-            auth_prov = spec.auth.to_dataclass(name=name, label=spec.resolve_label(name))
-        elif spec.kind not in ("tool", "runtime"):
+            auth_prov = spec.auth.to_dataclass(name=name, label=label)
+        elif is_agent_kind:
             auth_prov = spec.derive_opencode_auth(name)
         else:
             auth_prov = None
@@ -371,7 +370,6 @@ def load_roster() -> AgentRoster:
                     provider=name,
                 )
 
-        # Explicit mounts section
         for m in spec.mounts:
             if m.host_dir not in seen_mounts:
                 seen_mounts[m.host_dir] = MountDef(

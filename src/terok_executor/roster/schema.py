@@ -8,7 +8,7 @@ Each ``resources/agents/*.yaml`` (and any user override under
 before being projected onto the runtime dataclasses
 ([`AgentProvider`][terok_executor.provider.providers.AgentProvider],
 [`AuthProvider`][terok_executor.credentials.auth.AuthProvider],
-[`VaultRoute`][terok_executor.roster.loader.VaultRoute], …).
+[`VaultRoute`][terok_executor.roster.types.VaultRoute], …).
 
 Validation guarantees:
 
@@ -35,7 +35,7 @@ from typing import Annotated, Literal
 
 from pydantic import BaseModel, BeforeValidator, ConfigDict, Field, model_validator
 
-from terok_executor.credentials.auth import AuthKeyConfig, AuthProvider, _api_key_command
+from terok_executor.credentials.auth import AuthKeyConfig, AuthProvider, api_key_command
 from terok_executor.provider.providers import AgentProvider, OpenCodeProviderConfig
 
 from .types import HELP_SECTIONS, HelpSection, HelpSpec, InstallSpec, SidecarSpec, VaultRoute
@@ -50,11 +50,19 @@ def _coerce_str_to_list(v: object) -> object:
     return v
 
 
+def _coerce_none_to_empty_dict(v: object) -> object:
+    """Accept ``~``/``None`` in place of an empty mapping — YAML ergonomics."""
+    return {} if v is None else v
+
+
 StrOrStrList = Annotated[list[str], BeforeValidator(_coerce_str_to_list)]
 """Permits ``foo: bar`` as a shorthand for ``foo: [bar]``."""
 
+PostCaptureState = Annotated[dict[str, dict], BeforeValidator(_coerce_none_to_empty_dict)]
+"""Mapping of ``filename`` → JSON patch.  ``post_capture_state: ~`` collapses to ``{}``."""
 
-class _StrictModel(BaseModel):
+
+class StrictModel(BaseModel):
     """Base for every roster section — forbids unknown keys."""
 
     model_config = ConfigDict(extra="forbid")
@@ -63,14 +71,14 @@ class _StrictModel(BaseModel):
 # ── Sub-section models ────────────────────────────────────────────────────
 
 
-class RawGitIdentity(_StrictModel):
+class RawGitIdentity(StrictModel):
     """``git_identity:`` — author/committer override per agent."""
 
     name: str | None = Field(default=None, description="Git author/committer name")
     email: str | None = Field(default=None, description="Git author/committer email")
 
 
-class RawHeadless(_StrictModel):
+class RawHeadless(StrictModel):
     """``headless:`` — flags and subcommand for non-interactive prompt invocation."""
 
     subcommand: str | None = Field(
@@ -85,14 +93,14 @@ class RawHeadless(_StrictModel):
     )
 
 
-class RawAutoApprove(_StrictModel):
+class RawAutoApprove(StrictModel):
     """``auto_approve:`` — env vars and flags injected when ``TEROK_UNRESTRICTED=1``."""
 
     env: dict[str, str] = Field(default_factory=dict)
     flags: list[str] = Field(default_factory=list)
 
 
-class RawSession(_StrictModel):
+class RawSession(StrictModel):
     """``session:`` — session resume / continue capability flags."""
 
     supports_resume: bool = False
@@ -102,21 +110,21 @@ class RawSession(_StrictModel):
     supports_hook: bool = False
 
 
-class RawCapabilities(_StrictModel):
+class RawCapabilities(StrictModel):
     """``capabilities:`` — agent-specific feature toggles."""
 
     agents_json: bool = False
     add_dir: bool = False
-    log_format: str = "plain"
+    log_format: Literal["plain", "claude-stream-json"] = "plain"
 
 
-class RawWrapper(_StrictModel):
+class RawWrapper(StrictModel):
     """``wrapper:`` — in-container shell-wrapper behavior."""
 
     refuse_subcommands: list[str] = Field(default_factory=list)
 
 
-class RawOpenCode(_StrictModel):
+class RawOpenCode(StrictModel):
     """``opencode:`` — OpenAI-compatible provider config for OpenCode-based agents."""
 
     display_name: str
@@ -144,7 +152,7 @@ class RawOpenCode(_StrictModel):
         )
 
 
-class RawAuthKey(_StrictModel):
+class RawAuthKey(StrictModel):
     """``auth.auth_key:`` — printf-template-driven API-key prompt for tools."""
 
     label: str | None = None
@@ -155,7 +163,7 @@ class RawAuthKey(_StrictModel):
     tool_name: str | None = None
 
 
-class RawAuth(_StrictModel):
+class RawAuth(StrictModel):
     """``auth:`` — credential-capture behavior (OAuth container or API-key prompt)."""
 
     host_dir: str = Field(
@@ -171,18 +179,10 @@ class RawAuth(_StrictModel):
     extra_run_args: list[str] = Field(default_factory=list)
     modes: list[Literal["oauth", "api_key"]] = Field(default_factory=lambda: ["api_key"])
     api_key_hint: str = ""
-    post_capture_state: dict[str, dict] = Field(
+    post_capture_state: PostCaptureState = Field(
         default_factory=dict,
         description="JSON state files to merge into the auth mount post-capture",
     )
-
-    @model_validator(mode="before")
-    @classmethod
-    def _coerce_post_capture_none(cls, data: object) -> object:
-        # ``post_capture_state: ~`` round-trips as None; treat as empty.
-        if isinstance(data, dict) and data.get("post_capture_state") is None:
-            data = {**data, "post_capture_state": {}}
-        return data
 
     def to_dataclass(self, *, name: str, label: str) -> AuthProvider:
         """Project to the runtime [`AuthProvider`][terok_executor.credentials.auth.AuthProvider].
@@ -193,7 +193,7 @@ class RawAuth(_StrictModel):
         if self.command is not None:
             cmd = list(self.command)
         elif self.auth_key is not None:
-            cmd = _api_key_command(
+            cmd = api_key_command(
                 AuthKeyConfig(
                     label=self.auth_key.label or label,
                     key_url=self.auth_key.key_url,
@@ -219,7 +219,7 @@ class RawAuth(_StrictModel):
         )
 
 
-class RawOAuthRefresh(_StrictModel):
+class RawOAuthRefresh(StrictModel):
     """``vault.oauth_refresh:`` — token-refresh endpoint and client config."""
 
     token_url: str
@@ -227,7 +227,7 @@ class RawOAuthRefresh(_StrictModel):
     scope: str | None = None
 
 
-class RawVault(_StrictModel):
+class RawVault(StrictModel):
     """``vault:`` — proxy route + credential-injection rules."""
 
     route_prefix: str = Field(description="Path prefix in the proxy (e.g. ``claude``)")
@@ -257,16 +257,19 @@ class RawVault(_StrictModel):
         return data
 
     def to_dataclass(self, *, provider: str) -> VaultRoute:
-        """Project to a runtime [`VaultRoute`][terok_executor.roster.loader.VaultRoute]."""
+        """Project to a runtime [`VaultRoute`][terok_executor.roster.types.VaultRoute]."""
         refresh: dict[str, str] | None = None
         if self.oauth_refresh is not None:
-            refresh = self.oauth_refresh.model_dump(exclude_none=True)
+            r = self.oauth_refresh
+            refresh = {"token_url": r.token_url, "client_id": r.client_id}
+            if r.scope is not None:
+                refresh["scope"] = r.scope
         return VaultRoute(
             provider=provider,
             route_prefix=self.route_prefix,
             upstream=self.upstream,
             path_upstreams=dict(self.path_upstreams),
-            oauth_extra_headers={str(k): str(v) for k, v in self.oauth_extra_headers.items()},
+            oauth_extra_headers=dict(self.oauth_extra_headers),
             auth_header=self.auth_header,
             auth_prefix=self.auth_prefix,
             credential_type=self.credential_type,
@@ -280,21 +283,21 @@ class RawVault(_StrictModel):
         )
 
 
-class RawSidecar(_StrictModel):
+class RawSidecar(StrictModel):
     """``sidecar:`` — separate L1 image + env-mapped credentials for tool runners."""
 
     tool_name: str | None = None
     env_map: dict[str, str] = Field(default_factory=dict)
 
     def to_dataclass(self, *, default_name: str) -> SidecarSpec:
-        """Project to a runtime [`SidecarSpec`][terok_executor.roster.loader.SidecarSpec]."""
+        """Project to a runtime [`SidecarSpec`][terok_executor.roster.types.SidecarSpec]."""
         return SidecarSpec(
             tool_name=self.tool_name or default_name,
             env_map=dict(self.env_map),
         )
 
 
-class RawInstall(_StrictModel):
+class RawInstall(StrictModel):
     """``install:`` — Dockerfile fragments emitted into the L1 image."""
 
     depends_on: StrOrStrList = Field(default_factory=list)
@@ -302,7 +305,7 @@ class RawInstall(_StrictModel):
     run_as_dev: str = ""
 
     def to_dataclass(self) -> InstallSpec:
-        """Project to a runtime [`InstallSpec`][terok_executor.roster.loader.InstallSpec]."""
+        """Project to a runtime [`InstallSpec`][terok_executor.roster.types.InstallSpec]."""
         return InstallSpec(
             depends_on=tuple(self.depends_on),
             run_as_root=self.run_as_root or "",
@@ -310,18 +313,18 @@ class RawInstall(_StrictModel):
         )
 
 
-class RawHelp(_StrictModel):
+class RawHelp(StrictModel):
     """``help:`` — one-line entry shown in the in-container help banner."""
 
     label: str = ""
     section: HelpSection = "agent"
 
     def to_dataclass(self) -> HelpSpec:
-        """Project to a runtime [`HelpSpec`][terok_executor.roster.loader.HelpSpec]."""
+        """Project to a runtime [`HelpSpec`][terok_executor.roster.types.HelpSpec]."""
         return HelpSpec(label=self.label or "", section=self.section)
 
 
-class RawMountSpec(_StrictModel):
+class RawMountSpec(StrictModel):
     """One entry in the ``mounts:`` list — explicit shared-config mount."""
 
     host_dir: str
@@ -336,7 +339,19 @@ AgentKind = Literal["native", "opencode", "bridge", "tool", "runtime"]
 """Kind of roster entry: agents (native/opencode/bridge), tools, or runtime helpers."""
 
 
-class RawAgentYaml(_StrictModel):
+# Default sub-section instances reused for agents that omit a section —
+# all-defaults Pydantic models are immutable in practice for our reads,
+# so one shared instance per type avoids re-validating empty input on
+# every load.
+_DEFAULT_HEADLESS = RawHeadless()
+_DEFAULT_AUTO_APPROVE = RawAutoApprove()
+_DEFAULT_SESSION = RawSession()
+_DEFAULT_CAPABILITIES = RawCapabilities()
+_DEFAULT_WRAPPER = RawWrapper()
+_DEFAULT_GIT_IDENTITY = RawGitIdentity()
+
+
+class RawAgentYaml(StrictModel):
     """Full schema for one agent YAML file.
 
     The file's stem (e.g. ``claude.yaml`` → ``"claude"``) supplies the
@@ -375,12 +390,12 @@ class RawAgentYaml(_StrictModel):
 
     def to_agent_provider(self, name: str) -> AgentProvider:
         """Project to a runtime [`AgentProvider`][terok_executor.provider.providers.AgentProvider]."""
-        hl = self.headless or RawHeadless()
-        aa = self.auto_approve or RawAutoApprove()
-        sess = self.session or RawSession()
-        caps = self.capabilities or RawCapabilities()
-        wrap = self.wrapper or RawWrapper()
-        gi = self.git_identity or RawGitIdentity()
+        hl = self.headless or _DEFAULT_HEADLESS
+        aa = self.auto_approve or _DEFAULT_AUTO_APPROVE
+        sess = self.session or _DEFAULT_SESSION
+        caps = self.capabilities or _DEFAULT_CAPABILITIES
+        wrap = self.wrapper or _DEFAULT_WRAPPER
+        gi = self.git_identity or _DEFAULT_GIT_IDENTITY
         return AgentProvider(
             name=name,
             label=self.resolve_label(name),

@@ -717,7 +717,7 @@ def _apply_post_capture_state(
         _write_bytes_nofollow(path, (json.dumps(state, indent=2) + "\n").encode("utf-8"))
 
 
-def _api_key_command(cfg: AuthKeyConfig) -> list[str]:
+def api_key_command(cfg: AuthKeyConfig) -> list[str]:
     """Build a bash command that prompts for an API key and writes it to a config file."""
     config_dir = cfg.config_path.rsplit("/", 1)[0]
     parts = [
