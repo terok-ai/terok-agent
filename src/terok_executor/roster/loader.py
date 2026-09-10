@@ -816,6 +816,7 @@ def _provider_route_entry(provider: Provider) -> VaultRouteEntry:
         auth_prefix=auth_prefix,
         path_upstreams=provider.path_upstreams or None,
         oauth_extra_headers=oauth_extra_headers or None,
+        oauth_credential_headers=provider.oauth_credential_headers or None,
         oauth_refresh=provider.oauth_refresh or None,
     )
 
@@ -840,11 +841,13 @@ def _vault_route_from_binding(
         upstream=provider.upstream,
         path_upstreams=dict(provider.path_upstreams),
         oauth_extra_headers=oauth_extra_headers,
+        oauth_credential_headers=dict(provider.oauth_credential_headers),
         auth_header=auth_header,
         auth_prefix=auth_prefix,
         credential_type=binding.credential_type,
         credential_file=binding.credential_file,
         token_env=dict(binding.token_env),
+        token_env_aliases=tuple(binding.token_env_aliases),
         base_url_env=binding.base_url_env,
         socket_env=binding.socket_env,
         shared_config_patch=binding.config_patch,

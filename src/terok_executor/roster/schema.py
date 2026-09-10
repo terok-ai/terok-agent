@@ -331,6 +331,7 @@ class VaultRouteEntry(StrictModel):
 
     The on-disk file is a top-level ``{provider_name: VaultRouteEntry}`` dict.
     Empty optional fields (``path_upstreams``, ``oauth_extra_headers``,
+    ``oauth_credential_headers``,
     ``oauth_refresh``) are dropped from the serialized output via
     ``exclude_none``, keeping the produced file small and diff-friendly.
     """
@@ -343,6 +344,9 @@ class VaultRouteEntry(StrictModel):
     )
     oauth_extra_headers: dict[str, str] | None = Field(
         default=None, description="Headers added when forwarding OAuth credentials"
+    )
+    oauth_credential_headers: dict[str, str] | None = Field(
+        default=None, description="Upstream headers sourced from OAuth credential fields"
     )
     oauth_refresh: dict[str, str] | None = Field(
         default=None,
@@ -475,6 +479,7 @@ class RawProvider(StrictModel):
     upstream: str = Field(description="Upstream API base URL")
     auth: RawProviderAuth
     path_upstreams: dict[str, str] = Field(default_factory=dict)
+    oauth_credential_headers: dict[str, str] = Field(default_factory=dict)
     oauth_refresh: RawOAuthRefresh | None = None
     shared_domain: bool = False
     egress: RawEgress | None = Field(
@@ -520,6 +525,7 @@ class RawProvider(StrictModel):
             api_key_auth=self.auth.api_key.to_dataclass() if self.auth.api_key else None,
             oauth_auth=self.auth.oauth.to_dataclass() if self.auth.oauth else None,
             path_upstreams=dict(self.path_upstreams),
+            oauth_credential_headers=dict(self.oauth_credential_headers),
             oauth_refresh=refresh,
             shared_domain=self.shared_domain,
             egress_allow=tuple(self.egress.allow) if self.egress else (),
@@ -543,6 +549,7 @@ class RawProviderBinding(StrictModel):
         default=None, description="Provider name this agent routes to (None for harnesses)"
     )
     token_env: dict[str, str] = Field(default_factory=dict)
+    token_env_aliases: list[str] = Field(default_factory=list)
     base_url_env: str = ""
     socket_env: str = ""
     credential_file: str = ""
@@ -563,6 +570,7 @@ class RawProviderBinding(StrictModel):
         return ProviderBinding(
             default=self.default,
             token_env=dict(self.token_env),
+            token_env_aliases=tuple(self.token_env_aliases),
             base_url_env=self.base_url_env,
             socket_env=self.socket_env,
             credential_file=self.credential_file,

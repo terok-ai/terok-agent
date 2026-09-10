@@ -341,7 +341,7 @@ def _make_phantom_token_checks(roster: AgentRoster) -> list[DoctorCheck]:
 
     for name, route in roster.vault_routes.items():
         # Collect all phantom-token env var names (deduped downstream)
-        env_vars = list(route.token_env.values())
+        env_vars = [*route.token_env.values(), *route.token_env_aliases]
         for var in env_vars:
             if var in seen_vars:
                 continue

@@ -720,6 +720,7 @@ def _inject_vault_tokens(
         token_var = route.token_env.get(stored_type) or route.token_env.get("_default")
         if token_var:
             env[token_var] = tokens[name]
+        env.update(dict.fromkeys(route.token_env_aliases, tokens[name]))
 
         if route.socket_env:
             env[route.socket_env] = location.socket

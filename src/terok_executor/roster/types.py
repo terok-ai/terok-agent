@@ -83,6 +83,9 @@ class VaultRoute:
     oauth_extra_headers: dict[str, str] = field(default_factory=dict)
     """Provider-specific headers added only when forwarding OAuth credentials."""
 
+    oauth_credential_headers: dict[str, str] = field(default_factory=dict)
+    """Upstream header names mapped to fields in the stored OAuth credential."""
+
     auth_header: str = "Authorization"
     """HTTP header name for the real credential."""
 
@@ -106,6 +109,9 @@ class VaultRoute:
     OAuth token is stored
     (``{"oauth": "CLAUDE_CODE_OAUTH_TOKEN", "_default": "ANTHROPIC_API_KEY"}``).
     """
+
+    token_env_aliases: tuple[str, ...] = ()
+    """Additional env vars that receive the same phantom token."""
 
     base_url_env: str = ""
     """Env var to override with the vault's HTTP URL (e.g. ``"ANTHROPIC_BASE_URL"``)."""
@@ -313,6 +319,9 @@ class Provider:
 
     path_upstreams: dict[str, str] = field(default_factory=dict)
     """Request-path prefix → upstream-base overrides (e.g. Codex's ``/backend-api/``)."""
+
+    oauth_credential_headers: dict[str, str] = field(default_factory=dict)
+    """Upstream header names mapped to fields in the stored OAuth credential."""
 
     oauth_refresh: dict[str, str] | None = None
     """OAuth refresh config: ``{token_url, client_id, scope}``."""

@@ -74,6 +74,7 @@ provider:
   # container can route through the vault under OpenAI's standard env-var name.
   token_env:
     _default: OPENAI_API_KEY
+  token_env_aliases: [CODEX_CONNECTORS_TOKEN]
 
 auth:
   host_dir: _codex-config

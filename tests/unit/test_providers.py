@@ -82,6 +82,7 @@ class TestRouteEntryEquivalence:
                 "auth_prefix": route.auth_prefix,
                 "path_upstreams": route.path_upstreams or None,
                 "oauth_extra_headers": route.oauth_extra_headers or None,
+                "oauth_credential_headers": route.oauth_credential_headers or None,
                 "oauth_refresh": route.oauth_refresh or None,
             }
             assert _provider_route_entry(provider).model_dump() == expected, agent_name

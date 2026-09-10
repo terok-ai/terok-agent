@@ -33,7 +33,7 @@ dynamic = ["version"]
 # Dependency pins follow the policy in AGENTS.md ("Dependency Pinning &
 # pyproject.toml Hygiene").  Keep the dependency list comment-free.
 dependencies = [
-    "terok-sandbox @ https://github.com/terok-ai/terok-sandbox/releases/download/v0.5.0a34/terok_sandbox-0.5.0a34-py3-none-any.whl",
+    "terok-sandbox @ git+https://github.com/sliwowitz/terok-sandbox@fix/codex-apps-mcp-auth",
     "terok-util @ https://github.com/terok-ai/terok-util/releases/download/v0.3.1a9/terok_util-0.3.1a9-py3-none-any.whl",
     "ruamel.yaml==0.19.1",
     "Jinja2~=3.1",

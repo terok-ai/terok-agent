@@ -14,6 +14,9 @@ auth:
 path_upstreams:
   /backend-api/: https://chatgpt.com
 
+oauth_credential_headers:
+  ChatGPT-Account-ID: account_id
+
 # OAuth refresh -- endpoint, client_id, and grant shape extracted from the
 # Codex CLI source (codex-rs/login/src/auth/manager.rs v0.123.0).
 oauth_refresh:

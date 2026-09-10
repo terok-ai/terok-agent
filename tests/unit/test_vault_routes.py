@@ -129,6 +129,7 @@ class TestGenerateRoutesJson:
         assert routes["anthropic"]["auth_header"] == "dynamic"
         assert routes["anthropic"]["oauth_extra_headers"] == {"anthropic-beta": "oauth-2025-04-20"}
         assert routes["openai"]["path_upstreams"] == {"/backend-api/": "https://chatgpt.com"}
+        assert routes["openai"]["oauth_credential_headers"] == {"ChatGPT-Account-ID": "account_id"}
         assert "oauth_extra_headers" not in routes["openai"]
 
     def test_all_routes_have_upstream(self) -> None:

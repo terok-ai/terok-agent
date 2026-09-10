@@ -128,6 +128,9 @@ class ProviderBinding:
     "ANTHROPIC_API_KEY"}``).
     """
 
+    token_env_aliases: tuple[str, ...] = ()
+    """Additional env vars that receive the same phantom token."""
+
     base_url_env: str = ""
     """Env var overridden with the vault's HTTP URL (e.g. ``"ANTHROPIC_BASE_URL"``)."""
 

@@ -540,6 +540,21 @@ class TestVaultTokenInjection:
         # API key env var must NOT be set when OAuth credential is stored
         assert "ANTHROPIC_API_KEY" not in result.env
 
+    def test_codex_apps_receives_same_phantom_token(self, workspace, envs_dir, roster, tmp_path):
+        """Codex's Apps MCP bearer aliases the protected OpenAI handle."""
+        cfg = _make_vault_db(
+            tmp_path,
+            "openai",
+            {"type": "oauth", "access_token": "oauth-token", "account_id": "account-a"},
+        )
+        spec = _spec(workspace, envs_dir, agent_name="codex")
+
+        with patch("terok_executor.integrations.sandbox.SandboxConfig", return_value=cfg):
+            result = assemble_container_env(spec, roster, caller_manages_vault=False)
+
+        assert result.env["CODEX_CONNECTORS_TOKEN"] == result.env["OPENAI_API_KEY"]
+        assert result.env["CODEX_CONNECTORS_TOKEN"].startswith("terok-p-")
+
     def test_vault_api_key_uses_default_token_env(self, workspace, envs_dir, roster, tmp_path):
         """API-key credential falls back to the ``_default`` ``token_env`` entry."""
         cfg = _make_vault_db(tmp_path)
